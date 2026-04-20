@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Server</title>
+    <style>
+        body {
+            font-family: Arial;
+            max-width: 700px;
+            margin: 40px auto;
+        }
+
+        h2 {
+            border-bottom: 1px;
+            padding-bottom: 5px;
+        }
+
+        input, button {
+            margin: 5px 0;
+            padding: 6px 10px;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        #playlist {
+            list-style: none;
+            padding: 0;
+        }
+
+        #playlist li {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+
+        #playlist li.active {
+            background: #dce8ff;
+            font-weight: bold;
+        }
+
+        #previewBox {
+            margin-top: 15px;
+            text-align: center;
+            background: #111;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #previewBox img,
+        #previewBox video {
+            max-width: 100%;
+            max-height: 400px;
+        }
+
+        #uploadStatus {
+            font-size: 14px;
+            margin-top: 10px;
+        }
+
+        .error {
+            color: red;
+        }
+
+        #nowPlaying {
+            font-size: 13px;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>My HTTP Server</h1>
+
+<h2>Upload</h2>
+<input type="file" id="fileInput" multiple>
+<br>
+<button onclick="uploadFiles()">Upload</button>
+<div id="uploadStatus"></div>
+
+<h2>Playlist</h2>
+<button onclick="playPrev()">Prev</button>
+<button onclick="playNext()">Next</button>
+<button onclick="loadPlaylist()">Refresh</button>
+
+<div id="nowPlaying"></div>
+<ul id="playlist">
+    <li>No files yet</li>
+</ul>
+
+<h2>Preview</h2>
+<div id="previewBox">Select a file</div>
+
+<script>
+    let files = [];
+    let currentIdx = -1;
+
+    async function loadPlaylist() {
+        try {
+            const res = await fetch('/playlist');
+            files = await res.json();
+            renderPlaylist();
+        } catch {
+            document.getElementById('playlist').innerHTML =
+                '<li>Failed to load playlist</li>';
+        }
+    }
+
+    function renderPlaylist() {
+        const ul = document.getElementById('playlist');
+
+        if (files.length === 0) {
+            ul.innerHTML = '<li>No files</li>';
+            return;
+        }
+
+        ul.innerHTML = files.map((f, i) => `
+        <li onclick="selectFile(${i})" id="item-${i}">
+            ${f.name} (${f.type})
+        </li>
+    `).join('');
+    }
+
+    function selectFile(index) {
+        currentIdx = index;
+        highlight(index);
+        preview(files[index]);
+        document.getElementById('nowPlaying').textContent =
+            'Now playing: ' + files[index].name;
+    }
+
+    function highlight(index) {
+        document.querySelectorAll('#playlist li')
+            .forEach(li => li.classList.remove('active'));
+
+        const el = document.getElementById('item-' + index);
+        if (el) el.classList.add('active');
+    }
+
+    function playNext() {
+        if (files.length === 0) return;
+        selectFile((currentIdx + 1) % files.length);
+    }
+
+    function playPrev() {
+        if (files.length === 0) return;
+        selectFile((currentIdx - 1 + files.length) % files.length);
+    }
+
+    function preview(file) {
+        const box = document.getElementById('previewBox');
+        const url = '/uploads/' + encodeURIComponent(file.name);
+
+        if (file.type === 'video') {
+            box.innerHTML = `
+            <video controls autoplay>
+                <source src="${url}">
+            </video>`;
+        } else {
+            box.innerHTML = `<img src="${url}">`;
+        }
+    }
+
+    async function uploadFiles() {
+        const input = document.getElementById('fileInput');
+        const status = document.getElementById('uploadStatus');
+
+        if (input.files.length === 0) {
+            status.className = 'error';
+            status.textContent = 'Select files first';
+            return;
+        }
+
+        const formData = new FormData();
+        for (const file of input.files) {
+            formData.append('file', file);
+        }
+
+        status.textContent = 'Uploading...';
+
+        try {
+            const res = await fetch('/', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await res.json();
+
+            if (result.errors.length === 0) {
+                status.textContent = 'Upload successful';
+            } else {
+                status.className = 'error';
+                status.textContent = 'Error: ' + result.errors.join(', ');
+            }
+
+            loadPlaylist();
+
+        } catch (e) {
+            status.className = 'error';
+            status.textContent = 'Upload failed';
+        }
+    }
+
+    loadPlaylist();
+</script>
+
+</body>
+</html>
