@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
 public class SimpleHttpServer {
 
     private static final int PORT = 8080;
-    private static final String BASE    = "/home/sudheshna/IdeaProjects/JavaAssignments/src";
+    private static final String BASE    = "/home/sudheshna/IdeaProjects/PlaylistServer/src";
     private static final String UPLOADS = BASE + "/uploads";
 
     private static final long MAX_UPLOAD_SIZE = 500L * 1024 * 1024; // 500 MB
@@ -60,7 +60,7 @@ public class SimpleHttpServer {
     }
 
     public SimpleHttpServer() {
-        Logger fileLogger = LoggerFactory.getFileLogger(BASE + "/main/ioOutput/server.log");
+        Logger fileLogger = LoggerFactory.getFileLogger(BASE + "/logs/server.log");
         Logger consoleLogger = LoggerFactory.getConsoleLogger();
         this.logger = new LoggerManager(List.of(fileLogger, consoleLogger));
         try { Files.createDirectories(Paths.get(UPLOADS)); }
@@ -419,7 +419,7 @@ public class SimpleHttpServer {
     private int handleGet(SocketChannel client, SelectionKey key, String path,
                           String headers, boolean keepAlive, int end) throws IOException {
 
-        if (path.equals("/")) path = "/Public/index.html";
+        if (path.equals("/")) path = "/index.html";
         // At the top of handleGet, before resolvePath:
         if (path.equals("/playlist")) {
             handlePlaylist(client, key, keepAlive);
