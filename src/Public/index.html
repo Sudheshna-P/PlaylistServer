@@ -88,6 +88,12 @@
 <button onclick="uploadFiles()">Upload</button>
 <div id="uploadStatus"></div>
 
+<h2>Library</h2>
+<button onclick="loadLibrary()">Refresh Library</button>
+<ul id="library">
+    <li>No files yet</li>
+</ul>
+
 <h2>Playlist</h2>
 <button onclick="playPrev()">Prev</button>
 <button onclick="playNext()">Next</button>
@@ -127,6 +133,7 @@
         ul.innerHTML = files.map((f, i) => `
         <li onclick="selectFile(${i})" id="item-${i}">
             ${f.name} (${f.type})
+            <button onclick="removeFromPlaylist(event, '${f.name}')">Remove</button>
         </li>
     `).join('');
     }
@@ -189,7 +196,7 @@
         status.textContent = 'Uploading...';
 
         try {
-            const res = await fetch('/', {
+            const res = await fetch('/upload', {
                 method: 'POST',
                 body: formData
             });
@@ -210,8 +217,72 @@
             status.textContent = 'Upload failed';
         }
     }
+    async function loadLibrary() {
+        try {
+            const res = await fetch('/library');
+            const files = await res.json();
+            const ul = document.getElementById('library');
+
+            if (files.length === 0) {
+                ul.innerHTML = '<li>No uploads yet</li>';
+                return;
+            }
+
+            ul.innerHTML = files.map(f => `
+            <li>
+                ${f.name} (${f.type})
+                <button onclick="addToPlaylist('${f.name}')">+ Add</button>
+                <button onclick="deleteMedia('${f.name}')">Delete</button>
+            </li>
+        `).join('');
+        } catch (e) {
+            document.getElementById('library').innerHTML = '<li>Failed to load</li>';
+        }
+    }
+
+    async function removeFromPlaylist(event, filename) {
+        event.stopPropagation(); // prevent triggering selectFile
+        try {
+            const res = await fetch('/playlist/' + encodeURIComponent(filename), {
+                method: 'DELETE'
+            });
+            const result = await res.json();
+            loadPlaylist();
+        } catch (e) {
+            alert('Failed to remove from playlist');
+        }
+    }
+
+    async function deleteMedia(filename) {
+        if (!confirm('Delete ' + filename + ' permanently?')) return;
+        try {
+            const res = await fetch('/uploads/' + encodeURIComponent(filename), {
+                method: 'DELETE'
+            });
+            const result = await res.json();
+            loadLibrary();  // refresh library
+            loadPlaylist(); // refresh playlist in case it was there
+        } catch (e) {
+            alert('Failed to delete file');
+        }
+    }
+
+    async function addToPlaylist(filename) {
+        try {
+            const res = await fetch('/playlist/add', {
+                method: 'POST',
+                body: filename
+            });
+            const result = await res.json();
+            alert(result.status + ': ' + result.name);
+            loadPlaylist(); // refresh playlist
+        } catch (e) {
+            alert('Failed to add to playlist');
+        }
+    }
 
     loadPlaylist();
+    loadLibrary();
 </script>
 
 </body>

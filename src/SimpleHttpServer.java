@@ -1,80 +1,84 @@
+import controller.*;
 import http.HttpParser;
 import http.HttpResponse;
-import logger.Logger;
-import logger.LoggerFactory;
-import logger.LoggerManager;
-import util.ContentType;
-import util.PathResolver;
+import http.Router;
+import model.LibraryModel;
+import model.PlaylistModel;
+import model.UploadModel;
+import storage.PlaylistStore;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import logger.Logger;
+import logger.LoggerManager;
+import logger.LoggerFactory;
+
 public class SimpleHttpServer {
 
     private static final int PORT = 8080;
-    private static final String BASE    = "/home/sudheshna/IdeaProjects/PlaylistServer/src";
-    private static final String UPLOADS = BASE + "/uploads";
-
-    private static final long MAX_UPLOAD_SIZE = 500L * 1024 * 1024; // 500 MB
-
-    private static final DateTimeFormatter HTTP_DATE =
-            DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.ENGLISH)
-                    .withZone(ZoneOffset.UTC);
+    public static final String BASE    = "/home/sudheshna/IdeaProjects/PlaylistServer/src";
+    public static final String UPLOADS = BASE + "/uploads";
 
     private final LoggerManager logger;
     private final ExecutorService ioPool = Executors.newFixedThreadPool(8);
-
-    /** accumulates request headers */
-    private static class ReadAcc {
-        final ByteArrayOutputStream buf = new ByteArrayOutputStream();
-    }
-
-    /** Upload in progress: streaming body chunks to a temp file */
-    private static class UploadState {
-        final Path tempFile;
-        final FileChannel out;
-        final long totalBodyBytes;
-        long written = 0;
-        final String boundary;
-        final boolean keepAlive;
-
-        UploadState(Path tempFile, FileChannel out,
-                    long totalBodyBytes, String boundary, boolean keepAlive) {
-            this.tempFile = tempFile;
-            this.out  = out;
-            this.totalBodyBytes = totalBodyBytes;
-            this.boundary = boundary;
-            this.keepAlive = keepAlive;
-        }
-    }
+    private final Router router;
 
     public SimpleHttpServer() {
+        // create directories
+        try { Files.createDirectories(Paths.get(BASE + "/logs")); }
+        catch (IOException e) { throw new RuntimeException("Cannot create logs dir", e); }
+        try { Files.createDirectories(Paths.get(UPLOADS)); }
+        catch (IOException e) { throw new RuntimeException("Cannot create uploads dir", e); }
+
+        // logger
         Logger fileLogger = LoggerFactory.getFileLogger(BASE + "/logs/server.log");
         Logger consoleLogger = LoggerFactory.getConsoleLogger();
         this.logger = new LoggerManager(List.of(fileLogger, consoleLogger));
-        try { Files.createDirectories(Paths.get(UPLOADS)); }
-        catch (IOException e) { throw new RuntimeException("Cannot create uploads dir", e); }
+
+        // models and storage
+        LibraryModel libraryModel    = new LibraryModel(UPLOADS);
+        UploadModel uploadModel      = new UploadModel(UPLOADS);
+        PlaylistStore playlistStore  = new PlaylistStore(BASE);
+        PlaylistModel playlistModel  = new PlaylistModel(playlistStore, libraryModel);
+
+        // controllers
+        UploadController uploadController                 = new UploadController(UPLOADS, uploadModel, ioPool);
+        LibraryController libraryController               = new LibraryController(libraryModel);
+        PlaylistController playlistController             = new PlaylistController(playlistModel);
+        PlaylistAddController playlistAddController       = new PlaylistAddController(playlistModel);
+        PlaylistRemoveController playlistRemoveController = new PlaylistRemoveController(playlistModel);
+        FileController fileController                     = new FileController(ioPool);
+        DeleteMediaController deleteMediaController       = new DeleteMediaController(UPLOADS);
+
+        // router
+        this.router = new Router(
+                uploadController,
+                libraryController,
+                playlistController,
+                playlistAddController,
+                playlistRemoveController,
+                fileController,
+                deleteMediaController
+        );
     }
 
     private void handleClient(SelectionKey key) throws IOException {
         SocketChannel client = (SocketChannel) key.channel();
 
-        ByteBuffer buffer = ByteBuffer.allocate(65536); // 64 KB read buffer
+        ByteBuffer buffer = ByteBuffer.allocate(65536);
         int bytesRead;
         try {
             bytesRead = client.read(buffer);
@@ -86,30 +90,34 @@ public class SimpleHttpServer {
 
         Object attachment = key.attachment();
 
-        if (attachment instanceof UploadState) {
-            continueUpload(key, client, (UploadState) attachment, buffer);
+        // upload in progress
+        if (attachment instanceof UploadController.UploadState) {
+            uploadController(key, client, attachment, buffer);
             return;
         }
 
-        ReadAcc acc = (attachment instanceof ReadAcc) ? (ReadAcc) attachment : new ReadAcc();
+        UploadController.ReadAcc acc = (attachment instanceof UploadController.ReadAcc)
+                ? (UploadController.ReadAcc) attachment
+                : new UploadController.ReadAcc();
         acc.buf.write(buffer.array(), 0, buffer.limit());
         key.attach(acc);
 
-        byte[] data     = acc.buf.toByteArray();
-        int    processed = 0;
+        byte[] data   = acc.buf.toByteArray();
+        int processed = 0;
 
         while (true) {
-            int headerEnd = findHeaderEnd(data, processed);
+            int headerEnd = HttpParser.findHeaderEnd(data, processed);
             if (headerEnd == -1) break;
 
             int end = headerEnd + 4;
-            String headers = new String(data, processed, end - processed, StandardCharsets.US_ASCII);
+            String headers = new String(data, processed, end - processed,
+                    StandardCharsets.US_ASCII);
             String requestLine = headers.lines().findFirst().orElse("");
 
             if (requestLine.isEmpty()) { HttpResponse.cancelAndClose(key, client); return; }
 
             String[] parts = requestLine.split(" ");
-            if (parts.length < 2)    { HttpResponse.cancelAndClose(key, client); return; }
+            if (parts.length < 2) { HttpResponse.cancelAndClose(key, client); return; }
 
             String method = parts[0];
             String path   = parts[1];
@@ -121,29 +129,16 @@ public class SimpleHttpServer {
             String  connHdr   = HttpParser.extractHeader(headers, "Connection");
             boolean keepAlive = !"close".equalsIgnoreCase(connHdr);
 
-            if (method.equals("POST")) {
-                int alreadyBuffered = data.length - end;
+            int result = router.dispatch(method, path, client, key,
+                    headers, data, end, keepAlive);
 
-                int result = beginPost(key, client, data, headers,
-                        end, alreadyBuffered, keepAlive);
-                if (result == -1) return;
-                processed = result;
-                if (key.attachment() instanceof UploadState) break;
-                continue;
-            }
-
-            if (!method.equals("GET")) {
-                HttpResponse.send(client, key, HttpResponse.methodNotAllowed().getBytes(), keepAlive);
-                processed = end;
-                continue;
-            }
-
-            processed = handleGet(client, key, path, headers, keepAlive, end);
-            if (processed == -1) return;
+            if (result == -1) return;
+            processed = result;
+            if (key.attachment() instanceof UploadController.UploadState) break;
         }
 
-        if (!(key.attachment() instanceof UploadState)) {
-            ReadAcc newAcc = new ReadAcc();
+        if (!(key.attachment() instanceof UploadController.UploadState)) {
+            UploadController.ReadAcc newAcc = new UploadController.ReadAcc();
             if (processed < data.length)
                 newAcc.buf.write(data, processed, data.length - processed);
             key.attach(newAcc);
@@ -151,397 +146,11 @@ public class SimpleHttpServer {
         }
     }
 
-    /**
-     * Called once when the request headers are fully received.
-     * For multipart uploads we immediately switch to streaming mode.
-     * Returns -1 if connection was closed, otherwise the new processed offset.
-     */
-    private int beginPost(SelectionKey key, SocketChannel client,
-                          byte[] data, String headers, int headerEnd,
-                          int alreadyBuffered, boolean keepAlive) throws IOException {
-
-        String contentType   = HttpParser.extractHeader(headers, "Content-Type");
-        String contentLength = HttpParser.extractHeader(headers, "Content-Length");
-
-        if (contentLength == null) {
-            HttpResponse.send(client, key,
-                    HttpResponse.error(411, "Length Required", "Content-Length missing").getBytes(), keepAlive);
-            return headerEnd;
-        }
-
-        long bodyLength = Long.parseLong(contentLength.trim());
-
-        if (bodyLength > MAX_UPLOAD_SIZE) {
-            HttpResponse.send(client, key,
-                    HttpResponse.error(413, "Payload Too Large",
-                            "Max " + (MAX_UPLOAD_SIZE / 1024 / 1024) + " MB").getBytes(), keepAlive);
-            return headerEnd;
-        }
-
-        if (contentType != null && contentType.toLowerCase().contains("multipart/form-data")) {
-            String boundary = HttpParser.extractBoundary(contentType);
-            if (boundary == null) {
-                HttpResponse.send(client, key,
-                        HttpResponse.error(400, "Bad Request", "Missing boundary").getBytes(), keepAlive);
-                return headerEnd;
-            }
-
-            // Open a temp file to stream into
-            Path tempFile = Paths.get(UPLOADS, "upload_" + System.currentTimeMillis() + ".tmp");
-            FileChannel outChannel = FileChannel.open(tempFile,
-                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-
-            UploadState state = new UploadState(tempFile, outChannel,
-                    bodyLength, boundary, keepAlive);
-
-            if (alreadyBuffered > 0) {
-                ByteBuffer bodyChunk = ByteBuffer.wrap(data, headerEnd, alreadyBuffered);
-                while (bodyChunk.hasRemaining()) outChannel.write(bodyChunk);
-                state.written += alreadyBuffered;
-                logger.info("Upload started: " + bodyLength + " bytes total, "
-                        + alreadyBuffered + " already buffered");
-            }
-
-            key.attach(state);
-
-            if (state.written >= state.totalBodyBytes) {
-                finishUpload(key, client, state);
-            }
-
-            return -2;
-        }
-
-        if (data.length < headerEnd + bodyLength) return 0;
-
-        String body = new String(data, headerEnd, (int) bodyLength, StandardCharsets.UTF_8);
-        logger.info("POST Body: " + body);
-
-        String rb = "<h1>POST Received</h1>";
-        String response = "HTTP/1.1 200 OK\r\n" +
-                "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
-                "Content-Type: text/html\r\n" +
-                "Content-Length: " + rb.length() + "\r\n" +
-                "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" + rb;
-        client.write(ByteBuffer.wrap(response.getBytes(StandardCharsets.UTF_8)));
-        if (!keepAlive) { HttpResponse.cancelAndClose(key, client); return -1; }
-        return (int)(headerEnd + bodyLength);
-    }
-
-    /**
-     * Called on every subsequent read event while an upload is in progress.
-     * Writes the chunk straight to the temp file ? no buffering in memory.
-     */
-    private void continueUpload(SelectionKey key, SocketChannel client,
-                                UploadState state, ByteBuffer chunk) throws IOException {
-        long remaining = state.totalBodyBytes - state.written;
-        if (chunk.limit() > remaining) chunk.limit((int) remaining);
-
-        int writtenNow = chunk.remaining();
-        while (chunk.hasRemaining()) {
-            state.out.write(chunk);
-        }
-        state.written += writtenNow;
-
-        logger.info("Upload progress: " + state.written + " / " + state.totalBodyBytes + " bytes");
-
-        if (state.written >= state.totalBodyBytes) {
-            finishUpload(key, client, state);
-        }
-    }
-
-    //Parse temp file and respond
-
-    private void finishUpload(SelectionKey key, SocketChannel client,
-                              UploadState state) throws IOException {
-        try {
-            state.out.close();
-        } catch (IOException ignored) {}
-
-        logger.info("Upload complete, parsing multipart...");
-
-        key.interestOps(0);
-        ioPool.submit(() -> {
-            try {
-                byte[] body = Files.readAllBytes(state.tempFile);
-                Files.delete(state.tempFile);
-
-                List<String> saved  = new ArrayList<>();
-                List<String> errors = new ArrayList<>();
-                parseMultipart(body, state.boundary, saved, errors);
-                sendUploadResponse(client, key, saved, errors, state.keepAlive);
-            } catch (Exception e) {
-                logger.info("finishUpload error: " + e.getMessage());
-                try { client.close(); } catch (IOException ignored) {}
-            } finally {
-                key.attach(new ReadAcc());
-                if (key.isValid()) {
-                    key.interestOps(SelectionKey.OP_READ);
-                    key.selector().wakeup();
-                }
-            }
-        });
-    }
-
-    private void parseMultipart(byte[] body, String boundary,
-                                List<String> saved, List<String> errors) {
-
-        byte[] delimiter     = ("\r\n--" + boundary).getBytes(StandardCharsets.US_ASCII);
-        byte[] firstBoundary = ("--"     + boundary).getBytes(StandardCharsets.US_ASCII);
-
-        int pos = HttpParser.indexOf(body, firstBoundary, 0);
-        if (pos == -1) { errors.add("Malformed multipart body"); return; }
-        pos += firstBoundary.length;
-
-        while (pos < body.length) {
-            // "--" means final boundary
-            if (pos + 1 < body.length && body[pos] == '-' && body[pos+1] == '-') break;
-
-            // skip \r\n after boundary
-            if (pos + 1 < body.length && body[pos] == '\r' && body[pos+1] == '\n') pos += 2;
-            else break;
-
-            // find end of part headers
-            int partHeaderEnd = HttpParser.indexOf(body, new byte[]{'\r','\n','\r','\n'}, pos);
-            if (partHeaderEnd == -1) break;
-
-            String partHeaders = new String(body, pos, partHeaderEnd - pos, StandardCharsets.US_ASCII);
-            int dataStart = partHeaderEnd + 4;
-
-            int dataEnd = HttpParser.indexOf(body, delimiter, dataStart);
-            if (dataEnd == -1) dataEnd = body.length;
-
-            String disposition = HttpParser.extractPartHeader(partHeaders, "Content-Disposition");
-            String filename    = HttpParser.extractFilename(disposition);
-
-            if (filename == null || filename.isEmpty()) {
-                pos = dataEnd + delimiter.length;
-                continue; // plain text field, skip
-            }
-
-            filename = Paths.get(filename).getFileName().toString()
-                    .replaceAll("[^a-zA-Z0-9._\\-]", "_");
-
-            Path savePath = Paths.get(UPLOADS, filename);
-            if (Files.exists(savePath)) {
-                String ts  = String.valueOf(System.currentTimeMillis());
-                String ext = filename.contains(".")
-                        ? filename.substring(filename.lastIndexOf('.')) : "";
-                String base = filename.contains(".")
-                        ? filename.substring(0, filename.lastIndexOf('.')) : filename;
-                filename = base + "_" + ts + ext;
-                savePath = Paths.get(UPLOADS, filename);
-            }
-
-            try {
-                Files.write(savePath,
-                        Arrays.copyOfRange(body, dataStart, dataEnd),
-                        StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-                saved.add(filename);
-                logger.info("Saved: " + savePath + " (" + (dataEnd - dataStart) + " bytes)");
-            } catch (IOException e) {
-                errors.add(filename + " (" + e.getMessage() + ")");
-                logger.info("Save failed: " + e.getMessage());
-            }
-
-            pos = dataEnd + delimiter.length;
-        }
-    }
-
-    // Upload response
-    private void sendUploadResponse(SocketChannel client, SelectionKey key,
-                                    List<String> saved, List<String> errors,
-                                    boolean keepAlive) {
-        StringBuilder body = new StringBuilder();
-        body.append("{\n  \"uploaded\": [");
-        for (int i = 0; i < saved.size(); i++) {
-            body.append("\"").append(saved.get(i)).append("\"");
-            if (i < saved.size()-1) body.append(", ");
-        }
-        body.append("],\n  \"errors\": [");
-        for (int i = 0; i < errors.size(); i++) {
-            body.append("\"").append(errors.get(i)).append("\"");
-            if (i < errors.size()-1) body.append(", ");
-        }
-        body.append("]\n}");
-
-        String bodyStr    = body.toString();
-        int    status     = errors.isEmpty() ? 200 : saved.isEmpty() ? 400 : 207;
-        String statusText = status == 200 ? "OK" : status == 207 ? "Multi-Status" : "Bad Request";
-
-        String response = "HTTP/1.1 " + status + " " + statusText + "\r\n" +
-                "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Content-Length: " + bodyStr.length() + "\r\n" +
-                "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" +
-                bodyStr;
-        try {
-            client.write(ByteBuffer.wrap(response.getBytes(StandardCharsets.UTF_8)));
-            if (!keepAlive) HttpResponse.cancelAndClose(key, client);
-        } catch (IOException e) {
-            logger.info("Response write error: " + e.getMessage());
-        }
-    }
-
-    private void handlePlaylist(SocketChannel client, SelectionKey key, boolean keepAlive) {
-        try {
-            List<String> entries = new ArrayList<>();
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(UPLOADS))) {
-                for (Path p : stream) {
-                    if (Files.isDirectory(p)) continue;
-                    String name = p.getFileName().toString();
-                    // skip temp files still being written
-                    if (name.endsWith(".tmp")) continue;
-
-                    String lower = name.toLowerCase(Locale.ROOT);
-                    String type;
-                    if (lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".ogg")
-                            || lower.endsWith(".mov") || lower.endsWith(".avi")) {
-                        type = "video";
-                    } else {
-                        type = "image";
-                    }
-                    // build JSON object per file
-                    entries.add("{\"name\":\"" + name.replace("\"", "\\\"")
-                            + "\",\"type\":\"" + type + "\"}");
-                }
-            }
-            String body = "[" + String.join(",", entries) + "]";
-            String response = "HTTP/1.1 200 OK\r\n" +
-                    "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
-                    "Content-Type: application/json\r\n" +
-                    "Content-Length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n" +
-                    "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" +
-                    body;
-            HttpResponse.send(client, key,
-                    response.getBytes(StandardCharsets.UTF_8), keepAlive);
-        } catch (IOException e) {
-            logger.info("Playlist error: " + e.getMessage());
-            HttpResponse.send(client, key,  HttpResponse.notFound().getBytes(), keepAlive);
-        }
-    }
-
-    private int handleGet(SocketChannel client, SelectionKey key, String path,
-                          String headers, boolean keepAlive, int end) throws IOException {
-
-        if (path.equals("/")) path = "/index.html";
-        // At the top of handleGet, before resolvePath:
-        if (path.equals("/playlist")) {
-            handlePlaylist(client, key, keepAlive);
-            return end;
-        }
-
-        Path filePath = PathResolver.resolve(path);
-        if (filePath == null) {
-            HttpResponse.send(client, key,  HttpResponse.notFound().getBytes(), keepAlive); return end;
-        }
-        if (!PathResolver.isSafe(filePath)) {
-            HttpResponse.sendBytes(client, HttpResponse.forbidden().getBytes()); HttpResponse.cancelAndClose(key, client); return -1;
-        }
-        if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
-            HttpResponse.send(client, key, HttpResponse.notFound().getBytes(), keepAlive); return end;
-        }
-        if (handleCaching(client, key, headers, filePath, keepAlive)) return end;
-
-        String rangeHeader = HttpParser.extractHeader(headers, "Range");
-        final String fp = path;
-        key.interestOps(0);
-        if (rangeHeader != null && rangeHeader.trim().toLowerCase().startsWith("bytes=")) {
-            ioPool.submit(() -> {
-                try { handleRange(client, key, headers, filePath, keepAlive, fp); }
-                catch (IOException e) { logger.info("Range: " + e.getMessage()); try { client.close(); } catch (IOException ignored) {} }
-                finally { if (key.isValid()) { key.interestOps(SelectionKey.OP_READ); key.selector().wakeup(); } }
-            });
-        } else {
-            ioPool.submit(() -> {
-                try { serveFullFile(client, filePath, keepAlive, fp); }
-                catch (IOException e) { logger.info("Serve: " + e.getMessage()); try { client.close(); } catch (IOException ignored) {} }
-                finally { if (key.isValid()) { key.interestOps(SelectionKey.OP_READ); key.selector().wakeup(); } }
-            });
-        }
-        return end;
-    }
-
-    private void handleRange(SocketChannel client, SelectionKey key, String headers,
-                             Path filePath, boolean keepAlive, String path) throws IOException {
-        String rangeHeader = HttpParser.extractHeader(headers, "Range");
-        long fileSize = Files.size(filePath);
-        long start = 0, endByte = fileSize - 1;
-        try {
-            String[] parts = rangeHeader.substring(6).trim().split("-", 2);
-            if (!parts[0].isEmpty()) start   = Long.parseLong(parts[0].trim());
-            if (parts.length > 1 && !parts[1].isEmpty()) endByte = Long.parseLong(parts[1].trim());
-        } catch (Exception ignored) {}
-        if (start > endByte || start >= fileSize) {
-            HttpResponse.send(client, key,
-                    ("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + fileSize + "\r\nContent-Length: 0\r\n\r\n").getBytes(), keepAlive);
-            return;
-        }
-        endByte = Math.min(endByte, fileSize - 1);
-        long contentLength = endByte - start + 1;
-        String header = "HTTP/1.1 206 Partial Content\r\n" +
-                "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
-                "Last-Modified: " + HTTP_DATE.format(Files.getLastModifiedTime(filePath).toInstant()) + "\r\n" +
-                "Content-Type: " + ContentType.get(path) + "\r\n" +
-                "Content-Length: " + contentLength + "\r\n" +
-                "Content-Range: bytes " + start + "-" + endByte + "/" + fileSize + "\r\n" +
-                "Accept-Ranges: bytes\r\n" +
-                "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n";
-        try {
-            client.write(ByteBuffer.wrap(header.getBytes(StandardCharsets.US_ASCII)));
-            try (FileChannel fc = FileChannel.open(filePath, StandardOpenOption.READ)) {
-                long pos = start, rem = contentLength;
-                while (rem > 0) { long s = fc.transferTo(pos, rem, client); if (s <= 0) break; pos += s; rem -= s; }
-            }
-        } catch (IOException e) { logger.info("Range disconnect: " + e.getMessage()); client.close(); return; }
-        logger.info("206: " + path + " " + start + "-" + endByte);
-        if (!keepAlive) client.close();
-    }
-
-    private void serveFullFile(SocketChannel client, Path filePath,
-                               boolean keepAlive, String path) throws IOException {
-        long fileSize = Files.size(filePath);
-        String header = "HTTP/1.1 200 OK\r\n" +
-                "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
-                "Last-Modified: " + HTTP_DATE.format(Files.getLastModifiedTime(filePath).toInstant()) + "\r\n" +
-                "Content-Type: " + ContentType.get(path) + "\r\n" +
-                "Content-Length: " + fileSize + "\r\n" +
-                "Accept-Ranges: bytes\r\n" +
-                "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n";
-        try {
-            client.write(ByteBuffer.wrap(header.getBytes(StandardCharsets.US_ASCII)));
-            try (FileChannel fc = FileChannel.open(filePath, StandardOpenOption.READ)) {
-                long pos = 0, rem = fileSize;
-                while (rem > 0) { long s = fc.transferTo(pos, rem, client); if (s <= 0) break; pos += s; rem -= s; }
-            }
-        } catch (IOException e) { logger.info("Serve disconnect: " + e.getMessage()); client.close(); return; }
-        logger.info("200: " + path);
-        if (!keepAlive) client.close();
-    }
-
-    private boolean handleCaching(SocketChannel client, SelectionKey key,
-                                  String headers, Path filePath, boolean keepAlive) {
-        String ims = HttpParser.extractHeader(headers, "If-Modified-Since");
-        if (ims == null) return false;
-        try {
-            ZonedDateTime ct = ZonedDateTime.parse(ims.trim(), HTTP_DATE);
-            long lm = Files.getLastModifiedTime(filePath).toMillis() / 1000 * 1000;
-            long cm = ct.toInstant().toEpochMilli() / 1000 * 1000;
-            if (lm <= cm) {
-                String r = "HTTP/1.1 304 Not Modified\r\n" +
-                        "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
-                        "Last-Modified: " + HTTP_DATE.format(Files.getLastModifiedTime(filePath).toInstant()) + "\r\n" +
-                        "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n";
-                HttpResponse.send(client, key, r.getBytes(StandardCharsets.US_ASCII), keepAlive);
-                return true;
-            }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
-    private static int findHeaderEnd(byte[] data, int start) {
-        for (int i = start; i <= data.length - 4; i++)
-            if (data[i]=='\r' && data[i+1]=='\n' && data[i+2]=='\r' && data[i+3]=='\n') return i;
-        return -1;
+    private void uploadController(SelectionKey key, SocketChannel client,
+                                  Object attachment, ByteBuffer buffer) throws IOException {
+        // find the upload controller from router to continue upload
+        router.continueUpload(key, client,
+                (UploadController.UploadState) attachment, buffer);
     }
 
     public static void main(String[] args) {
