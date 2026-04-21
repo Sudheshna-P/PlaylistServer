@@ -1,3 +1,5 @@
+import http.HttpParser;
+import http.HttpResponse;
 import logger.Logger;
 import logger.LoggerFactory;
 import logger.LoggerManager;
@@ -77,9 +79,9 @@ public class SimpleHttpServer {
         try {
             bytesRead = client.read(buffer);
         } catch (IOException e) {
-            cancelAndClose(key, client); return;
+            HttpResponse.cancelAndClose(key, client); return;
         }
-        if (bytesRead == -1) { cancelAndClose(key, client); return; }
+        if (bytesRead == -1) { HttpResponse.cancelAndClose(key, client); return; }
         buffer.flip();
 
         Object attachment = key.attachment();
@@ -104,10 +106,10 @@ public class SimpleHttpServer {
             String headers = new String(data, processed, end - processed, StandardCharsets.US_ASCII);
             String requestLine = headers.lines().findFirst().orElse("");
 
-            if (requestLine.isEmpty()) { cancelAndClose(key, client); return; }
+            if (requestLine.isEmpty()) { HttpResponse.cancelAndClose(key, client); return; }
 
             String[] parts = requestLine.split(" ");
-            if (parts.length < 2)    { cancelAndClose(key, client); return; }
+            if (parts.length < 2)    { HttpResponse.cancelAndClose(key, client); return; }
 
             String method = parts[0];
             String path   = parts[1];
@@ -116,7 +118,7 @@ public class SimpleHttpServer {
 
             logger.info("Request: " + requestLine);
 
-            String  connHdr   = extractHeader(headers, "Connection");
+            String  connHdr   = HttpParser.extractHeader(headers, "Connection");
             boolean keepAlive = !"close".equalsIgnoreCase(connHdr);
 
             if (method.equals("POST")) {
@@ -131,7 +133,7 @@ public class SimpleHttpServer {
             }
 
             if (!method.equals("GET")) {
-                sendResponse(client, key, send405().getBytes(), keepAlive);
+                HttpResponse.send(client, key, HttpResponse.methodNotAllowed().getBytes(), keepAlive);
                 processed = end;
                 continue;
             }
@@ -158,29 +160,29 @@ public class SimpleHttpServer {
                           byte[] data, String headers, int headerEnd,
                           int alreadyBuffered, boolean keepAlive) throws IOException {
 
-        String contentType   = extractHeader(headers, "Content-Type");
-        String contentLength = extractHeader(headers, "Content-Length");
+        String contentType   = HttpParser.extractHeader(headers, "Content-Type");
+        String contentLength = HttpParser.extractHeader(headers, "Content-Length");
 
         if (contentLength == null) {
-            sendResponse(client, key,
-                    sendError(411, "Length Required", "Content-Length missing").getBytes(), keepAlive);
+            HttpResponse.send(client, key,
+                    HttpResponse.error(411, "Length Required", "Content-Length missing").getBytes(), keepAlive);
             return headerEnd;
         }
 
         long bodyLength = Long.parseLong(contentLength.trim());
 
         if (bodyLength > MAX_UPLOAD_SIZE) {
-            sendResponse(client, key,
-                    sendError(413, "Payload Too Large",
+            HttpResponse.send(client, key,
+                    HttpResponse.error(413, "Payload Too Large",
                             "Max " + (MAX_UPLOAD_SIZE / 1024 / 1024) + " MB").getBytes(), keepAlive);
             return headerEnd;
         }
 
         if (contentType != null && contentType.toLowerCase().contains("multipart/form-data")) {
-            String boundary = extractBoundary(contentType);
+            String boundary = HttpParser.extractBoundary(contentType);
             if (boundary == null) {
-                sendResponse(client, key,
-                        sendError(400, "Bad Request", "Missing boundary").getBytes(), keepAlive);
+                HttpResponse.send(client, key,
+                        HttpResponse.error(400, "Bad Request", "Missing boundary").getBytes(), keepAlive);
                 return headerEnd;
             }
 
@@ -221,7 +223,7 @@ public class SimpleHttpServer {
                 "Content-Length: " + rb.length() + "\r\n" +
                 "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" + rb;
         client.write(ByteBuffer.wrap(response.getBytes(StandardCharsets.UTF_8)));
-        if (!keepAlive) { cancelAndClose(key, client); return -1; }
+        if (!keepAlive) { HttpResponse.cancelAndClose(key, client); return -1; }
         return (int)(headerEnd + bodyLength);
     }
 
@@ -286,7 +288,7 @@ public class SimpleHttpServer {
         byte[] delimiter     = ("\r\n--" + boundary).getBytes(StandardCharsets.US_ASCII);
         byte[] firstBoundary = ("--"     + boundary).getBytes(StandardCharsets.US_ASCII);
 
-        int pos = indexOf(body, firstBoundary, 0);
+        int pos = HttpParser.indexOf(body, firstBoundary, 0);
         if (pos == -1) { errors.add("Malformed multipart body"); return; }
         pos += firstBoundary.length;
 
@@ -299,17 +301,17 @@ public class SimpleHttpServer {
             else break;
 
             // find end of part headers
-            int partHeaderEnd = indexOf(body, new byte[]{'\r','\n','\r','\n'}, pos);
+            int partHeaderEnd = HttpParser.indexOf(body, new byte[]{'\r','\n','\r','\n'}, pos);
             if (partHeaderEnd == -1) break;
 
             String partHeaders = new String(body, pos, partHeaderEnd - pos, StandardCharsets.US_ASCII);
             int dataStart = partHeaderEnd + 4;
 
-            int dataEnd = indexOf(body, delimiter, dataStart);
+            int dataEnd = HttpParser.indexOf(body, delimiter, dataStart);
             if (dataEnd == -1) dataEnd = body.length;
 
-            String disposition = extractPartHeader(partHeaders, "Content-Disposition");
-            String filename    = extractFilename(disposition);
+            String disposition = HttpParser.extractPartHeader(partHeaders, "Content-Disposition");
+            String filename    = HttpParser.extractFilename(disposition);
 
             if (filename == null || filename.isEmpty()) {
                 pos = dataEnd + delimiter.length;
@@ -374,7 +376,7 @@ public class SimpleHttpServer {
                 bodyStr;
         try {
             client.write(ByteBuffer.wrap(response.getBytes(StandardCharsets.UTF_8)));
-            if (!keepAlive) cancelAndClose(key, client);
+            if (!keepAlive) HttpResponse.cancelAndClose(key, client);
         } catch (IOException e) {
             logger.info("Response write error: " + e.getMessage());
         }
@@ -410,11 +412,11 @@ public class SimpleHttpServer {
                     "Content-Length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n" +
                     "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" +
                     body;
-            sendResponse(client, key,
+            HttpResponse.send(client, key,
                     response.getBytes(StandardCharsets.UTF_8), keepAlive);
         } catch (IOException e) {
             logger.info("Playlist error: " + e.getMessage());
-            sendResponse(client, key, send404().getBytes(), keepAlive);
+            HttpResponse.send(client, key,  HttpResponse.notFound().getBytes(), keepAlive);
         }
     }
 
@@ -430,17 +432,17 @@ public class SimpleHttpServer {
 
         Path filePath = PathResolver.resolve(path);
         if (filePath == null) {
-            sendResponse(client, key, send404().getBytes(), keepAlive); return end;
+            HttpResponse.send(client, key,  HttpResponse.notFound().getBytes(), keepAlive); return end;
         }
         if (!PathResolver.isSafe(filePath)) {
-            sendBytes(client, send403().getBytes()); cancelAndClose(key, client); return -1;
+            HttpResponse.sendBytes(client, HttpResponse.forbidden().getBytes()); HttpResponse.cancelAndClose(key, client); return -1;
         }
         if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
-            sendResponse(client, key, send404().getBytes(), keepAlive); return end;
+            HttpResponse.send(client, key, HttpResponse.notFound().getBytes(), keepAlive); return end;
         }
         if (handleCaching(client, key, headers, filePath, keepAlive)) return end;
 
-        String rangeHeader = extractHeader(headers, "Range");
+        String rangeHeader = HttpParser.extractHeader(headers, "Range");
         final String fp = path;
         key.interestOps(0);
         if (rangeHeader != null && rangeHeader.trim().toLowerCase().startsWith("bytes=")) {
@@ -461,7 +463,7 @@ public class SimpleHttpServer {
 
     private void handleRange(SocketChannel client, SelectionKey key, String headers,
                              Path filePath, boolean keepAlive, String path) throws IOException {
-        String rangeHeader = extractHeader(headers, "Range");
+        String rangeHeader = HttpParser.extractHeader(headers, "Range");
         long fileSize = Files.size(filePath);
         long start = 0, endByte = fileSize - 1;
         try {
@@ -470,7 +472,7 @@ public class SimpleHttpServer {
             if (parts.length > 1 && !parts[1].isEmpty()) endByte = Long.parseLong(parts[1].trim());
         } catch (Exception ignored) {}
         if (start > endByte || start >= fileSize) {
-            sendResponse(client, key,
+            HttpResponse.send(client, key,
                     ("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + fileSize + "\r\nContent-Length: 0\r\n\r\n").getBytes(), keepAlive);
             return;
         }
@@ -518,7 +520,7 @@ public class SimpleHttpServer {
 
     private boolean handleCaching(SocketChannel client, SelectionKey key,
                                   String headers, Path filePath, boolean keepAlive) {
-        String ims = extractHeader(headers, "If-Modified-Since");
+        String ims = HttpParser.extractHeader(headers, "If-Modified-Since");
         if (ims == null) return false;
         try {
             ZonedDateTime ct = ZonedDateTime.parse(ims.trim(), HTTP_DATE);
@@ -529,98 +531,18 @@ public class SimpleHttpServer {
                         "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
                         "Last-Modified: " + HTTP_DATE.format(Files.getLastModifiedTime(filePath).toInstant()) + "\r\n" +
                         "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n";
-                sendResponse(client, key, r.getBytes(StandardCharsets.US_ASCII), keepAlive);
+                HttpResponse.send(client, key, r.getBytes(StandardCharsets.US_ASCII), keepAlive);
                 return true;
             }
         } catch (Exception ignored) {}
         return false;
     }
 
-    //Multipart helpers
-
-    private static String extractBoundary(String contentType) {
-        for (String p : contentType.split(";")) {
-            p = p.trim();
-            if (p.toLowerCase().startsWith("boundary="))
-                return p.substring("boundary=".length()).trim();
-        }
-        return null;
-    }
-
-    private static String extractFilename(String disposition) {
-        if (disposition == null) return null;
-        for (String p : disposition.split(";")) {
-            p = p.trim();
-            if (p.toLowerCase().startsWith("filename=")) {
-                String v = p.substring("filename=".length()).trim();
-                if (v.startsWith("\"") && v.endsWith("\"")) v = v.substring(1, v.length()-1);
-                return v;
-            }
-        }
-        return null;
-    }
-
-    private static int indexOf(byte[] data, byte[] pattern, int from) {
-        outer:
-        for (int i = from; i <= data.length - pattern.length; i++) {
-            for (int j = 0; j < pattern.length; j++)
-                if (data[i+j] != pattern[j]) continue outer;
-            return i;
-        }
-        return -1;
-    }
-
-    private static String extractPartHeader(String partHeaders, String name) {
-        for (String line : partHeaders.split("\r\n"))
-            if (line.toLowerCase().startsWith(name.toLowerCase() + ":"))
-                return line.substring(line.indexOf(':')+1).trim();
-        return null;
-    }
-
-    private void sendResponse(SocketChannel client, SelectionKey key, byte[] data, boolean keepAlive) {
-        try {
-            client.write(ByteBuffer.wrap(data));
-            if (!keepAlive) cancelAndClose(key, client);
-        } catch (IOException e) {
-            logger.info("Send error: " + e.getMessage());
-            try { cancelAndClose(key, client); } catch (Exception ignored) {}
-        }
-    }
-
-    private void sendBytes(SocketChannel client, byte[] data) {
-        try { client.write(ByteBuffer.wrap(data)); }
-        catch (IOException e) { logger.info("Send error: " + e.getMessage()); }
-    }
-
-    private void cancelAndClose(SelectionKey key, SocketChannel client) {
-        try { key.cancel(); } catch (Exception ignored) {}
-        try { client.close(); } catch (Exception ignored) {}
-    }
-
-    private static String sendError(int code, String status, String msg) {
-        String body = "<h1>" + code + " " + status + "</h1><p>" + msg + "</p>";
-        return "HTTP/1.1 " + code + " " + status + "\r\n" +
-                "Content-Type: text/html\r\n" +
-                "Content-Length: " + body.length() + "\r\n\r\n" + body;
-    }
-
-    private static String send404() { return sendError(404, "Not Found","Resource not found"); }
-    private static String send405() { return sendError(405, "Method Not Allowed","Method not allowed"); }
-    private static String send403() { return sendError(403, "Forbidden","Access denied");      }
-
     private static int findHeaderEnd(byte[] data, int start) {
         for (int i = start; i <= data.length - 4; i++)
             if (data[i]=='\r' && data[i+1]=='\n' && data[i+2]=='\r' && data[i+3]=='\n') return i;
         return -1;
     }
-
-    private static String extractHeader(String headers, String name) {
-        for (String line : headers.split("\r\n"))
-            if (line.toLowerCase(Locale.ROOT).startsWith(name.toLowerCase(Locale.ROOT) + ":"))
-                return line.substring(line.indexOf(':')+1).trim();
-        return null;
-    }
-
 
     public static void main(String[] args) {
         SimpleHttpServer server = new SimpleHttpServer();
