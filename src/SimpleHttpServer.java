@@ -1,6 +1,8 @@
 import logger.Logger;
 import logger.LoggerFactory;
 import logger.LoggerManager;
+import util.ContentType;
+import util.PathResolver;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -426,11 +428,11 @@ public class SimpleHttpServer {
             return end;
         }
 
-        Path filePath = resolvePath(path);
+        Path filePath = PathResolver.resolve(path);
         if (filePath == null) {
             sendResponse(client, key, send404().getBytes(), keepAlive); return end;
         }
-        if (!isSafePath(filePath)) {
+        if (!PathResolver.isSafe(filePath)) {
             sendBytes(client, send403().getBytes()); cancelAndClose(key, client); return -1;
         }
         if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
@@ -477,7 +479,7 @@ public class SimpleHttpServer {
         String header = "HTTP/1.1 206 Partial Content\r\n" +
                 "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
                 "Last-Modified: " + HTTP_DATE.format(Files.getLastModifiedTime(filePath).toInstant()) + "\r\n" +
-                "Content-Type: " + getContentType(path) + "\r\n" +
+                "Content-Type: " + ContentType.get(path) + "\r\n" +
                 "Content-Length: " + contentLength + "\r\n" +
                 "Content-Range: bytes " + start + "-" + endByte + "/" + fileSize + "\r\n" +
                 "Accept-Ranges: bytes\r\n" +
@@ -499,7 +501,7 @@ public class SimpleHttpServer {
         String header = "HTTP/1.1 200 OK\r\n" +
                 "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
                 "Last-Modified: " + HTTP_DATE.format(Files.getLastModifiedTime(filePath).toInstant()) + "\r\n" +
-                "Content-Type: " + getContentType(path) + "\r\n" +
+                "Content-Type: " + ContentType.get(path) + "\r\n" +
                 "Content-Length: " + fileSize + "\r\n" +
                 "Accept-Ranges: bytes\r\n" +
                 "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n";
@@ -512,24 +514,6 @@ public class SimpleHttpServer {
         } catch (IOException e) { logger.info("Serve disconnect: " + e.getMessage()); client.close(); return; }
         logger.info("200: " + path);
         if (!keepAlive) client.close();
-    }
-
-    private Path resolvePath(String path) {
-        String folder = "Public", prefix = "";
-        if (path.startsWith("/images/")) { folder = "images"; prefix = "/images"; }
-        else if (path.startsWith("/files/")) { folder = "documents"; prefix = "/files"; }
-        else if (path.startsWith("/video/")) { folder = "video"; prefix = "/video"; }
-        else if (path.startsWith("/uploads/")) { folder = "uploads"; prefix = "/uploads"; }
-        String rel = prefix.isEmpty() ? path : path.substring(prefix.length());
-        if (rel.isEmpty() || rel.equals("/")) return null;
-        String fileRel = rel.startsWith("/") ? rel.substring(1) : rel;
-        if (fileRel.isEmpty()) return null;
-        return Paths.get(BASE, folder, fileRel);
-    }
-
-    private boolean isSafePath(Path filePath) {
-        return filePath.normalize().toAbsolutePath()
-                .startsWith(Paths.get(BASE).toAbsolutePath().normalize());
     }
 
     private boolean handleCaching(SocketChannel client, SelectionKey key,
@@ -637,21 +621,6 @@ public class SimpleHttpServer {
         return null;
     }
 
-    private static String getContentType(String path) {
-        String p = path.toLowerCase(Locale.ROOT);
-        if (p.endsWith(".html") || p.endsWith(".htm")) return "text/html; charset=utf-8";
-        if (p.endsWith(".css"))  return "text/css";
-        if (p.endsWith(".js"))   return "application/javascript";
-        if (p.endsWith(".png"))  return "image/png";
-        if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
-        if (p.endsWith(".gif"))  return "image/gif";
-        if (p.endsWith(".mp4"))  return "video/mp4";
-        if (p.endsWith(".webm")) return "video/webm";
-        if (p.endsWith(".ogg"))  return "video/ogg";
-        if (p.endsWith(".pdf"))  return "application/pdf";
-        if (p.endsWith(".json")) return "application/json";
-        return "application/octet-stream";
-    }
 
     public static void main(String[] args) {
         SimpleHttpServer server = new SimpleHttpServer();
