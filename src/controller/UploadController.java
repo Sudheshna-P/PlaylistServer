@@ -114,7 +114,7 @@ public class UploadController {
             return -2;
         }
 
-        // non multipart POST
+        // non-multipart POST
         String body = new String(data, headerEnd, (int) bodyLength, StandardCharsets.UTF_8);
         String rb = "<h1>POST Received</h1>";
         String response = "HTTP/1.1 200 OK\r\n" +

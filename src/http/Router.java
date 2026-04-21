@@ -1,10 +1,8 @@
 package http;
 
 import controller.*;
-import model.UploadModel;
 import util.PathResolver;
-import http.HttpParser;
-import http.HttpResponse;
+
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -48,9 +46,8 @@ public class Router {
         // POST /upload
         if (method.equals("POST") && path.equals("/upload")) {
             int alreadyBuffered = data.length - end;
-            int result = uploadController.beginUpload(key, client, data,
+            return uploadController.beginUpload(key, client, data,
                     headers, end, alreadyBuffered, keepAlive);
-            return result;
         }
 
         // POST /playlist/add
