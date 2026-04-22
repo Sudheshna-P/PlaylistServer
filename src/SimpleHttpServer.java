@@ -5,6 +5,7 @@ import http.Router;
 import model.LibraryModel;
 import model.PlaylistModel;
 import model.UploadModel;
+import storage.Database;
 import storage.PlaylistStore;
 
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -21,6 +23,7 @@ import java.util.concurrent.Executors;
 import logger.Logger;
 import logger.LoggerManager;
 import logger.LoggerFactory;
+import storage.PlaylistStoreDB;
 
 public class SimpleHttpServer {
 
@@ -32,7 +35,7 @@ public class SimpleHttpServer {
     private final ExecutorService ioPool = Executors.newFixedThreadPool(8);
     private final Router router;
 
-    public SimpleHttpServer() {
+    public SimpleHttpServer() throws SQLException {
         // create directories
         try { Files.createDirectories(Paths.get(BASE + "/logs")); }
         catch (IOException e) { throw new RuntimeException("Cannot create logs dir", e); }
@@ -47,8 +50,10 @@ public class SimpleHttpServer {
         // models and storage
         LibraryModel libraryModel    = new LibraryModel(UPLOADS);
         UploadModel uploadModel      = new UploadModel(UPLOADS);
-        PlaylistStore playlistStore  = new PlaylistStore(BASE);
-        PlaylistModel playlistModel  = new PlaylistModel(playlistStore, libraryModel);
+        Database db                      = new Database(BASE);
+        PlaylistStoreDB playlistStoreDB  = new PlaylistStoreDB(db);
+        PlaylistModel playlistModel      = new PlaylistModel(playlistStoreDB, libraryModel);
+
 
         // controllers
         UploadController uploadController                 = new UploadController(UPLOADS, uploadModel, ioPool);
@@ -149,7 +154,7 @@ public class SimpleHttpServer {
                 (UploadController.UploadState) attachment, buffer);
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws SQLException {
         SimpleHttpServer server = new SimpleHttpServer();
         server.logger.info("Starting server on port " + PORT);
         new ServerNIO(PORT, server::handleClient).start();

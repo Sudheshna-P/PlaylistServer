@@ -7,6 +7,7 @@ import model.PlaylistModel;
 import java.io.IOException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
+import java.sql.SQLException;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -46,7 +47,7 @@ public class PlaylistController {
 
             HttpResponse.send(client, key, response.getBytes(), keepAlive);
 
-        } catch (IOException e) {
+        } catch (IOException | SQLException e) {
             HttpResponse.send(client, key,
                     HttpResponse.notFound().getBytes(), keepAlive);
         }

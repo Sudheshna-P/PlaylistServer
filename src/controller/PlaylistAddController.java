@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -54,7 +55,7 @@ public class PlaylistAddController {
             HttpResponse.send(client, key,
                     response.getBytes(StandardCharsets.UTF_8), keepAlive);
 
-        } catch (IOException e) {
+        } catch (IOException | SQLException e) {
             HttpResponse.send(client, key,
                     HttpResponse.error(500, "Internal Server Error",
                             e.getMessage()).getBytes(), keepAlive);
