@@ -1,10 +1,8 @@
 package controller;
 
 import http.HttpResponse;
+import http.ResponseWriter;
 
-import java.io.IOException;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -25,14 +23,12 @@ public class DeleteMediaController {
         this.uploadsPath = uploadsPath;
     }
 
-    public void handle(SocketChannel client, SelectionKey key,
-                       String filename, boolean keepAlive) {
-
-        // basic safety check
+    public void handle(ResponseWriter writer, String filename) {
         if (filename == null || filename.isEmpty()
                 || filename.contains("..") || filename.contains("/")) {
-            HttpResponse.send(client, key,
-                    HttpResponse.forbidden().getBytes(), keepAlive);
+            try {
+                writer.write(HttpResponse.forbidden().getBytes());
+            } catch (Exception ignored) {}
             return;
         }
 
@@ -40,8 +36,7 @@ public class DeleteMediaController {
             java.nio.file.Path target = Paths.get(uploadsPath, filename);
 
             if (!Files.exists(target)) {
-                HttpResponse.send(client, key,
-                        HttpResponse.notFound().getBytes(), keepAlive);
+                writer.write(HttpResponse.notFound().getBytes());
                 return;
             }
 
@@ -52,16 +47,17 @@ public class DeleteMediaController {
                     "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
                     "Content-Type: application/json\r\n" +
                     "Content-Length: " + result.getBytes(StandardCharsets.UTF_8).length + "\r\n" +
-                    "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" +
+                    "Connection: " + (writer.isKeepAlive() ? "keep-alive" : "close") + "\r\n\r\n" +
                     result;
 
-            HttpResponse.send(client, key,
-                    response.getBytes(StandardCharsets.UTF_8), keepAlive);
+            writer.write(response.getBytes(StandardCharsets.UTF_8));
+            if (!writer.isKeepAlive()) writer.close();
 
-        } catch (IOException e) {
-            HttpResponse.send(client, key,
-                    HttpResponse.error(500, "Internal Server Error",
-                            e.getMessage()).getBytes(), keepAlive);
+        } catch (Exception e) {
+            try {
+                writer.write(HttpResponse.error(500, "Internal Server Error",
+                        e.getMessage()).getBytes());
+            } catch (Exception ignored) {}
         }
     }
 }

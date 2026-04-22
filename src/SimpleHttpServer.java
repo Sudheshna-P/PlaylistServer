@@ -1,6 +1,7 @@
 import controller.*;
 import http.HttpParser;
 import http.HttpResponse;
+import http.ResponseWriter;
 import http.Router;
 import model.LibraryModel;
 import model.PlaylistModel;
@@ -48,21 +49,21 @@ public class SimpleHttpServer {
         this.logger = new LoggerManager(List.of(fileLogger, consoleLogger));
 
         // models and storage
-        LibraryModel libraryModel    = new LibraryModel(UPLOADS);
-        UploadModel uploadModel      = new UploadModel(UPLOADS);
-        Database db                      = new Database(BASE);
-        PlaylistStoreDB playlistStoreDB  = new PlaylistStoreDB(db);
-        PlaylistModel playlistModel      = new PlaylistModel(playlistStoreDB, libraryModel);
+        LibraryModel libraryModel = new LibraryModel(UPLOADS);
+        UploadModel uploadModel = new UploadModel(UPLOADS);
+        Database db = new Database(BASE);
+        PlaylistStoreDB playlistStoreDB = new PlaylistStoreDB(db);
+        PlaylistModel playlistModel = new PlaylistModel(playlistStoreDB, libraryModel);
 
 
         // controllers
-        UploadController uploadController                 = new UploadController(UPLOADS, uploadModel, ioPool);
-        LibraryController libraryController               = new LibraryController(libraryModel);
-        PlaylistController playlistController             = new PlaylistController(playlistModel);
-        PlaylistAddController playlistAddController       = new PlaylistAddController(playlistModel);
+        UploadController uploadController = new UploadController(UPLOADS, uploadModel, ioPool);
+        LibraryController libraryController = new LibraryController(libraryModel);
+        PlaylistController playlistController = new PlaylistController(playlistModel);
+        PlaylistAddController playlistAddController = new PlaylistAddController(playlistModel);
         PlaylistRemoveController playlistRemoveController = new PlaylistRemoveController(playlistModel);
-        FileController fileController                     = new FileController(ioPool);
-        DeleteMediaController deleteMediaController       = new DeleteMediaController(UPLOADS);
+        FileController fileController = new FileController(ioPool);
+        DeleteMediaController deleteMediaController = new DeleteMediaController(UPLOADS);
 
         // router
         this.router = new Router(
@@ -130,9 +131,8 @@ public class SimpleHttpServer {
             String  connHdr   = HttpParser.extractHeader(headers, "Connection");
             boolean keepAlive = !"close".equalsIgnoreCase(connHdr);
 
-            int result = router.dispatch(method, path, client, key,
-                    headers, data, end, keepAlive);
-
+            ResponseWriter writer = new ResponseWriter(key, client, keepAlive);
+            int result = router.dispatch(method, path, writer, headers, data, end);
             if (result == -1) return;
             processed = result;
             if (key.attachment() instanceof UploadController.UploadState) break;

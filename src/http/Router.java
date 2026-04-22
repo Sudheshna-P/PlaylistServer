@@ -3,7 +3,6 @@ package http;
 import controller.*;
 import util.PathResolver;
 
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
@@ -39,15 +38,17 @@ public class Router {
     }
 
     public int dispatch(String method, String path,
-                        SocketChannel client, SelectionKey key,
+                        ResponseWriter writer,
                         String headers, byte[] data,
-                        int end, boolean keepAlive) throws IOException {
+                        int end) throws IOException {
 
         // POST /upload
         if (method.equals("POST") && path.equals("/upload")) {
             int alreadyBuffered = data.length - end;
-            return uploadController.beginUpload(key, client, data,
-                    headers, end, alreadyBuffered, keepAlive);
+            int result = uploadController.beginUpload(
+                    writer.getKey(), writer.getClient(),
+                    data, headers, end, alreadyBuffered, writer.isKeepAlive());
+            return result;
         }
 
         // POST /playlist/add
@@ -56,28 +57,28 @@ public class Router {
             int bodyLength = contentLength != null
                     ? Integer.parseInt(contentLength.trim()) : 0;
             String body = new String(data, end, bodyLength, StandardCharsets.UTF_8);
-            playlistAddController.handle(client, key, body, keepAlive);
+            playlistAddController.handle(writer, body);
             return end + bodyLength;
         }
 
         // DELETE /playlist/:name
         if (method.equals("DELETE") && path.startsWith("/playlist/")) {
             String filename = path.substring("/playlist/".length());
-            playlistRemoveController.handle(client, key, filename, keepAlive);
+            playlistRemoveController.handle(writer, filename);
             return end;
         }
 
         // DELETE /uploads/:name
         if (method.equals("DELETE") && path.startsWith("/uploads/")) {
             String filename = path.substring("/uploads/".length());
-            deleteMediaController.handle(client, key, filename, keepAlive);
+            deleteMediaController.handle(writer, filename);
             return end;
         }
 
         // non GET methods
         if (!method.equals("GET")) {
-            HttpResponse.send(client, key,
-                    HttpResponse.methodNotAllowed().getBytes(), keepAlive);
+            writer.write(HttpResponse.methodNotAllowed().getBytes());
+            if (!writer.isKeepAlive()) writer.close();
             return end;
         }
 
@@ -85,44 +86,41 @@ public class Router {
         if (path.equals("/")) path = "/index.html";
 
         if (path.equals("/playlist")) {
-            playlistController.handle(client, key, keepAlive);
+            playlistController.handle(writer);
             return end;
         }
 
         if (path.equals("/uploads") || path.equals("/library")) {
-            libraryController.handle(client, key, keepAlive);
+            libraryController.handle(writer);
             return end;
         }
 
         // static file serving
         Path filePath = PathResolver.resolve(path);
         if (filePath == null) {
-            HttpResponse.send(client, key,
-                    HttpResponse.notFound().getBytes(), keepAlive);
+            writer.write(HttpResponse.notFound().getBytes());
+            if (!writer.isKeepAlive()) writer.close();
             return end;
         }
         if (!PathResolver.isSafe(filePath)) {
-            HttpResponse.sendBytes(client,
-                    HttpResponse.forbidden().getBytes());
-            HttpResponse.cancelAndClose(key, client);
+            writer.write(HttpResponse.forbidden().getBytes());
+            writer.close();
             return -1;
         }
         if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
-            HttpResponse.send(client, key,
-                    HttpResponse.notFound().getBytes(), keepAlive);
+            writer.write(HttpResponse.notFound().getBytes());
+            if (!writer.isKeepAlive()) writer.close();
             return end;
         }
 
-
         String rangeHeader = HttpParser.extractHeader(headers, "Range");
-        fileController.handle(client, key, filePath, path, rangeHeader, keepAlive);
+        fileController.handle(writer, filePath, path, rangeHeader);
         return end;
     }
+
     public void continueUpload(SelectionKey key, SocketChannel client,
                                UploadController.UploadState state,
-                               ByteBuffer buffer) throws IOException {
+                               java.nio.ByteBuffer buffer) throws IOException {
         uploadController.continueUpload(key, client, state, buffer);
     }
-
-
 }

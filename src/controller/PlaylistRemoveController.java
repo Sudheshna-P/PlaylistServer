@@ -1,13 +1,10 @@
 package controller;
 
 import http.HttpResponse;
+import http.ResponseWriter;
 import model.PlaylistModel;
 
-import java.io.IOException;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -25,18 +22,15 @@ public class PlaylistRemoveController {
         this.playlistModel = playlistModel;
     }
 
-    public void handle(SocketChannel client, SelectionKey key,
-                       String filename, boolean keepAlive) {
+    public void handle(ResponseWriter writer, String filename) {
         try {
             if (filename == null || filename.isEmpty()) {
-                HttpResponse.send(client, key,
-                        HttpResponse.error(400, "Bad Request",
-                                "Filename required").getBytes(), keepAlive);
+                writer.write(HttpResponse.error(400, "Bad Request",
+                        "Filename required").getBytes());
                 return;
             }
 
             boolean removed = playlistModel.remove(filename);
-
             String result = removed
                     ? "{\"status\":\"removed\",\"name\":\"" + filename + "\"}"
                     : "{\"status\":\"not found\",\"name\":\"" + filename + "\"}";
@@ -45,16 +39,17 @@ public class PlaylistRemoveController {
                     "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
                     "Content-Type: application/json\r\n" +
                     "Content-Length: " + result.getBytes(StandardCharsets.UTF_8).length + "\r\n" +
-                    "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" +
+                    "Connection: " + (writer.isKeepAlive() ? "keep-alive" : "close") + "\r\n\r\n" +
                     result;
 
-            HttpResponse.send(client, key,
-                    response.getBytes(StandardCharsets.UTF_8), keepAlive);
+            writer.write(response.getBytes(StandardCharsets.UTF_8));
+            if (!writer.isKeepAlive()) writer.close();
 
-        } catch (IOException | SQLException e) {
-            HttpResponse.send(client, key,
-                    HttpResponse.error(500, "Internal Server Error",
-                            e.getMessage()).getBytes(), keepAlive);
+        } catch (Exception e) {
+            try {
+                writer.write(HttpResponse.error(500, "Internal Server Error",
+                        e.getMessage()).getBytes());
+            } catch (Exception ignored) {}
         }
     }
 }

@@ -1,17 +1,14 @@
 package controller;
 
 import http.HttpResponse;
+import http.ResponseWriter;
 import model.MediaFile;
 import model.PlaylistModel;
 
-import java.io.IOException;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.SocketChannel;
-import java.sql.SQLException;
+import java.util.List;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
 import java.util.Locale;
 
 public class PlaylistController {
@@ -26,7 +23,7 @@ public class PlaylistController {
         this.playlistModel = playlistModel;
     }
 
-    public void handle(SocketChannel client, SelectionKey key, boolean keepAlive) {
+    public void handle(ResponseWriter writer) {
         try {
             List<MediaFile> files = playlistModel.getAll();
 
@@ -42,14 +39,17 @@ public class PlaylistController {
                     "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
                     "Content-Type: application/json\r\n" +
                     "Content-Length: " + body.getBytes().length + "\r\n" +
-                    "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n" +
+                    "Connection: " + (writer.isKeepAlive() ? "keep-alive" : "close") + "\r\n\r\n" +
                     body;
 
-            HttpResponse.send(client, key, response.getBytes(), keepAlive);
+            writer.write(response.getBytes());
+            if (!writer.isKeepAlive()) writer.close();
 
-        } catch (IOException | SQLException e) {
-            HttpResponse.send(client, key,
-                    HttpResponse.notFound().getBytes(), keepAlive);
+        } catch (Exception e) {
+            try {
+                writer.write(HttpResponse.error(500, "Internal Server Error",
+                        e.getMessage()).getBytes());
+            } catch (Exception ignored) {}
         }
     }
 }
