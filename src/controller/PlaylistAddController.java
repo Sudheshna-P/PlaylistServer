@@ -32,11 +32,9 @@ public class PlaylistAddController {
                 return;
             }
 
-            boolean added = playlistModel.add(filename);
-            String result = added
-                    ? "{\"status\":\"added\",\"name\":\"" + filename + "\"}"
-                    : "{\"status\":\"already exists\",\"name\":\"" + filename + "\"}";
+            playlistModel.addItem(1, filename);
 
+            String result = "{\"status\":\"added\",\"name\":\"" + filename + "\"}";
             String response = "HTTP/1.1 200 OK\r\n" +
                     "Date: " + HTTP_DATE.format(ZonedDateTime.now()) + "\r\n" +
                     "Content-Type: application/json\r\n" +
@@ -47,6 +45,11 @@ public class PlaylistAddController {
             writer.write(response.getBytes(StandardCharsets.UTF_8));
             if (!writer.isKeepAlive()) writer.close();
 
+        } catch (IllegalArgumentException e) {
+            try {
+                writer.write(HttpResponse.error(400, "Bad Request",
+                        e.getMessage()).getBytes());
+            } catch (Exception ignored) {}
         } catch (Exception e) {
             try {
                 writer.write(HttpResponse.error(500, "Internal Server Error",

@@ -2,6 +2,7 @@ package controller;
 
 import http.HttpResponse;
 import http.ResponseWriter;
+import model.MediaFile;
 import model.PlaylistModel;
 
 import java.nio.charset.StandardCharsets;
@@ -11,7 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 
-public class PlaylistController {
+public class PlaylistGetController {
 
     private static final DateTimeFormatter HTTP_DATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.ENGLISH)
@@ -19,21 +20,18 @@ public class PlaylistController {
 
     private final PlaylistModel playlistModel;
 
-    public PlaylistController(PlaylistModel playlistModel) {
+    public PlaylistGetController(PlaylistModel playlistModel) {
         this.playlistModel = playlistModel;
     }
 
-    public void handle(ResponseWriter writer) {
+    public void handle(ResponseWriter writer, int playlistId) {
         try {
-            List<String[]> playlists = playlistModel.getAllPlaylists();
+            List<MediaFile> items = playlistModel.getPlaylistItems(playlistId);
 
             StringBuilder json = new StringBuilder("[");
-            for (int i = 0; i < playlists.size(); i++) {
-                String[] p = playlists.get(i);
-                json.append("{\"id\":").append(p[0])
-                        .append(",\"name\":\"").append(p[1]).append("\"")
-                        .append(",\"count\":").append(p[2]).append("}");
-                if (i < playlists.size() - 1) json.append(",");
+            for (int i = 0; i < items.size(); i++) {
+                json.append(items.get(i).toJson());
+                if (i < items.size() - 1) json.append(",");
             }
             json.append("]");
 
@@ -48,6 +46,11 @@ public class PlaylistController {
             writer.write(response.getBytes(StandardCharsets.UTF_8));
             if (!writer.isKeepAlive()) writer.close();
 
+        } catch (IllegalArgumentException e) {
+            try {
+                writer.write(HttpResponse.error(404, "Not Found",
+                        e.getMessage()).getBytes());
+            } catch (Exception ignored) {}
         } catch (Exception e) {
             try {
                 writer.write(HttpResponse.error(500, "Internal Server Error",

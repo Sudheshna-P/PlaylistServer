@@ -36,34 +36,38 @@ public class SimpleHttpServer {
     private final ExecutorService ioPool = Executors.newFixedThreadPool(8);
     private final Router router;
 
-    public SimpleHttpServer() throws SQLException {
-        // create directories
+    public SimpleHttpServer() {
         try { Files.createDirectories(Paths.get(BASE + "/logs")); }
         catch (IOException e) { throw new RuntimeException("Cannot create logs dir", e); }
         try { Files.createDirectories(Paths.get(UPLOADS)); }
         catch (IOException e) { throw new RuntimeException("Cannot create uploads dir", e); }
 
-        // logger
         Logger fileLogger = LoggerFactory.getFileLogger(BASE + "/logs/server.log");
         Logger consoleLogger = LoggerFactory.getConsoleLogger();
         this.logger = new LoggerManager(List.of(fileLogger, consoleLogger));
 
         // models and storage
-        LibraryModel libraryModel = new LibraryModel(UPLOADS);
-        UploadModel uploadModel = new UploadModel(UPLOADS);
-        Database db = new Database(BASE);
+        LibraryModel libraryModel    = new LibraryModel(UPLOADS);
+        UploadModel uploadModel      = new UploadModel(UPLOADS);
+        Database db;
+        try { db = new Database(BASE); }
+        catch (Exception e) { throw new RuntimeException("Cannot init database", e); }
         PlaylistStoreDB playlistStoreDB = new PlaylistStoreDB(db);
-        PlaylistModel playlistModel = new PlaylistModel(playlistStoreDB, libraryModel);
-
+        PlaylistModel playlistModel     = new PlaylistModel(playlistStoreDB, libraryModel);
 
         // controllers
-        UploadController uploadController = new UploadController(UPLOADS, uploadModel, ioPool);
-        LibraryController libraryController = new LibraryController(libraryModel);
-        PlaylistController playlistController = new PlaylistController(playlistModel);
-        PlaylistAddController playlistAddController = new PlaylistAddController(playlistModel);
+        UploadController uploadController                 = new UploadController(UPLOADS, uploadModel, ioPool);
+        LibraryController libraryController               = new LibraryController(libraryModel);
+        PlaylistController playlistController             = new PlaylistController(playlistModel);
+        PlaylistAddController playlistAddController       = new PlaylistAddController(playlistModel);
         PlaylistRemoveController playlistRemoveController = new PlaylistRemoveController(playlistModel);
-        FileController fileController = new FileController(ioPool);
-        DeleteMediaController deleteMediaController = new DeleteMediaController(UPLOADS);
+        FileController fileController                     = new FileController(ioPool);
+        DeleteMediaController deleteMediaController       = new DeleteMediaController(UPLOADS);
+        PlaylistCreateController playlistCreateController = new PlaylistCreateController(playlistModel);
+        PlaylistListController playlistListController     = new PlaylistListController(playlistModel);
+        PlaylistGetController playlistGetController       = new PlaylistGetController(playlistModel);
+        PlaylistEditController playlistEditController     = new PlaylistEditController(playlistModel);
+        PlaylistDeleteController playlistDeleteController = new PlaylistDeleteController(playlistModel);
 
         // router
         this.router = new Router(
@@ -73,7 +77,12 @@ public class SimpleHttpServer {
                 playlistAddController,
                 playlistRemoveController,
                 fileController,
-                deleteMediaController
+                deleteMediaController,
+                playlistCreateController,
+                playlistListController,
+                playlistGetController,
+                playlistEditController,
+                playlistDeleteController
         );
     }
 
@@ -102,6 +111,7 @@ public class SimpleHttpServer {
                 ? (UploadController.ReadAcc) attachment
                 : new UploadController.ReadAcc();
         acc.buf.write(buffer.array(), 0, buffer.limit());
+
         key.attach(acc);
 
         byte[] data   = acc.buf.toByteArray();

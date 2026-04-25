@@ -11,7 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 
-public class PlaylistController {
+public class PlaylistListController {
 
     private static final DateTimeFormatter HTTP_DATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.ENGLISH)
@@ -19,7 +19,7 @@ public class PlaylistController {
 
     private final PlaylistModel playlistModel;
 
-    public PlaylistController(PlaylistModel playlistModel) {
+    public PlaylistListController(PlaylistModel playlistModel) {
         this.playlistModel = playlistModel;
     }
 

@@ -1,289 +1,363 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>My Server</title>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Playlist Server</title>
     <style>
-        body {
-            font-family: Arial;
-            max-width: 700px;
-            margin: 40px auto;
-        }
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+        h2 { border-bottom: 1px solid #ccc; padding-bottom: 6px; margin-top: 30px; }
+        button { background: #007bff; color: white; border: none; padding: 7px 14px; cursor: pointer; border-radius: 4px; margin: 3px; }
+        button:hover { background: #0056b3; }
+        button.danger { background: #dc3545; }
+        button.danger:hover { background: #a71d2a; }
+        button.success { background: #28a745; }
+        button.success:hover { background: #1a6b2f; }
+        input[type=text] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; width: 250px; }
+        .status { font-size: 13px; margin-top: 8px; color: green; }
+        .status.error { color: red; }
 
-        h2 {
-            border-bottom: 1px;
-            padding-bottom: 5px;
-        }
+        /* library */
+        #libraryList { list-style: none; padding: 0; }
+        #libraryList li { padding: 8px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px; }
+        #libraryList li input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
 
-        input, button {
-            margin: 5px 0;
-            padding: 6px 10px;
-        }
+        /* playlists */
+        #playlistList { list-style: none; padding: 0; }
+        #playlistList li { padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+        #playlistList li:hover { background: #f5f5f5; }
+        #playlistList li.active { background: #dce8ff; border-color: #007bff; }
 
-        button {
-            background: #007bff;
-            color: white;
-            border: none;
-            cursor: pointer;
-        }
+        /* playlist detail */
+        #playlistDetail { display: none; background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 16px; margin-top: 12px; }
+        #detailItems { list-style: none; padding: 0; }
+        #detailItems li { padding: 8px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+        #detailItems li:hover { background: #eef3ff; }
+        #detailItems li.active { background: #dce8ff; font-weight: bold; }
 
-        button:hover {
-            background: #0056b3;
-        }
+        /* preview */
+        #previewBox { margin-top: 15px; text-align: center; background: #111; min-height: 200px; display: flex; align-items: center; justify-content: center; border-radius: 8px; }
+        #previewBox img, #previewBox video { max-width: 100%; max-height: 420px; }
+        #nowPlaying { font-size: 13px; margin: 6px 0; color: #555; }
 
-        #playlist {
-            list-style: none;
-            padding: 0;
-        }
-
-        #playlist li {
-            padding: 8px;
-            border-bottom: 1px solid #eee;
-            cursor: pointer;
-        }
-
-        #playlist li.active {
-            background: #dce8ff;
-            font-weight: bold;
-        }
-
-        #previewBox {
-            margin-top: 15px;
-            text-align: center;
-            background: #111;
-            min-height: 200px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        #previewBox img,
-        #previewBox video {
-            max-width: 100%;
-            max-height: 400px;
-        }
-
-        #uploadStatus {
-            font-size: 14px;
-            margin-top: 10px;
-        }
-
-        .error {
-            color: red;
-        }
-
-        #nowPlaying {
-            font-size: 13px;
-            margin: 5px 0;
-        }
+        .tag { font-size: 11px; background: #e0e0e0; padding: 2px 7px; border-radius: 10px; color: #333; }
+        .tag.video { background: #d0eaff; color: #0056b3; }
+        .tag.image { background: #d4f0d4; color: #1a6b2f; }
     </style>
 </head>
-
 <body>
 
-<h1>My HTTP Server</h1>
+<h1>Playlist Server</h1>
 
-<h2>Upload</h2>
-<input type="file" id="fileInput" multiple>
-<br>
+<!-- ── Upload ── -->
+<h2>Upload Media</h2>
+<input type="file" id="fileInput" multiple accept="image/*,video/*"/>
 <button onclick="uploadFiles()">Upload</button>
-<div id="uploadStatus"></div>
+<div class="status" id="uploadStatus"></div>
 
+<!-- ── Library ── -->
 <h2>Library</h2>
-<button onclick="loadLibrary()">Refresh Library</button>
-<ul id="library">
-    <li>No files yet</li>
-</ul>
+<button onclick="loadLibrary()">Refresh</button>
+<ul id="libraryList"><li>No files yet</li></ul>
 
-<h2>Playlist</h2>
-<button onclick="playPrev()">Prev</button>
-<button onclick="playNext()">Next</button>
-<button onclick="loadPlaylist()">Refresh</button>
+<!-- ── Create Playlist ── -->
+<h2>Create Playlist</h2>
+<input type="text" id="playlistName" placeholder="Playlist name"/>
+<button class="success" onclick="createPlaylist()">Create</button>
+<div class="status" id="createStatus"></div>
+<p style="font-size:13px;color:#555;">Check files in library above then click Create.</p>
 
-<div id="nowPlaying"></div>
-<ul id="playlist">
-    <li>No files yet</li>
-</ul>
+<!-- ── My Playlists ── -->
+<h2>My Playlists</h2>
+<button onclick="loadPlaylists()">Refresh</button>
+<ul id="playlistList"><li>No playlists yet</li></ul>
 
+<!-- ── Playlist Detail ── -->
+<div id="playlistDetail">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+        <h3 id="detailName" style="margin:0"></h3>
+        <div>
+            <button onclick="playPrev()">⏮ Prev</button>
+            <button onclick="playNext()">Next ⏭</button>
+            <button class="danger" onclick="deletePlaylist()">Delete Playlist</button>
+        </div>
+    </div>
+    <ul id="detailItems"></ul>
+</div>
+
+<!-- ── Preview ── -->
 <h2>Preview</h2>
+<div id="nowPlaying">Select a file from a playlist to preview</div>
 <div id="previewBox">Select a file</div>
 
 <script>
-    let files = [];
-    let currentIdx = -1;
+    let library = [];
+    let playlists = [];
+    let activePlaylistId = -1;
+    let activePlaylistItems = [];
+    let currentItemIdx = -1;
 
-    async function loadPlaylist() {
-        try {
-            const res = await fetch('/playlist');
-            files = await res.json();
-            renderPlaylist();
-        } catch {
-            document.getElementById('playlist').innerHTML =
-                '<li>Failed to load playlist</li>';
-        }
-    }
-
-    function renderPlaylist() {
-        const ul = document.getElementById('playlist');
-
-        if (files.length === 0) {
-            ul.innerHTML = '<li>No files</li>';
-            return;
-        }
-
-        ul.innerHTML = files.map((f, i) => `
-        <li onclick="selectFile(${i})" id="item-${i}">
-            ${f.name} (${f.type})
-            <button onclick="removeFromPlaylist(event, '${f.name}')">Remove</button>
-        </li>
-    `).join('');
-    }
-
-    function selectFile(index) {
-        currentIdx = index;
-        highlight(index);
-        preview(files[index]);
-        document.getElementById('nowPlaying').textContent =
-            'Now playing: ' + files[index].name;
-    }
-
-    function highlight(index) {
-        document.querySelectorAll('#playlist li')
-            .forEach(li => li.classList.remove('active'));
-
-        const el = document.getElementById('item-' + index);
-        if (el) el.classList.add('active');
-    }
-
-    function playNext() {
-        if (files.length === 0) return;
-        selectFile((currentIdx + 1) % files.length);
-    }
-
-    function playPrev() {
-        if (files.length === 0) return;
-        selectFile((currentIdx - 1 + files.length) % files.length);
-    }
-
-    function preview(file) {
-        const box = document.getElementById('previewBox');
-        const url = '/uploads/' + encodeURIComponent(file.name);
-
-        if (file.type === 'video') {
-            box.innerHTML = `
-            <video controls autoplay>
-                <source src="${url}">
-            </video>`;
-        } else {
-            box.innerHTML = `<img src="${url}">`;
-        }
-    }
-
+    // ── Upload ────────────────────────────────────────────────────────────────
     async function uploadFiles() {
-        const input = document.getElementById('fileInput');
+        const input  = document.getElementById('fileInput');
         const status = document.getElementById('uploadStatus');
-
         if (input.files.length === 0) {
-            status.className = 'error';
+            status.className = 'status error';
             status.textContent = 'Select files first';
             return;
         }
-
         const formData = new FormData();
-        for (const file of input.files) {
-            formData.append('file', file);
-        }
-
+        for (const f of input.files) formData.append('file', f);
+        status.className = 'status';
         status.textContent = 'Uploading...';
-
         try {
-            const res = await fetch('/upload', {
-                method: 'POST',
-                body: formData
-            });
-
+            const res    = await fetch('/upload', { method: 'POST', body: formData });
             const result = await res.json();
-
-            if (result.errors.length === 0) {
-                status.textContent = 'Upload successful';
-            } else {
-                status.className = 'error';
-                status.textContent = 'Error: ' + result.errors.join(', ');
-            }
-
-            loadPlaylist();
-
+            status.textContent = result.errors.length === 0
+                ? '✓ Uploaded: ' + result.uploaded.join(', ')
+                : 'Errors: ' + result.errors.join(', ');
+            if (result.errors.length > 0) status.className = 'status error';
+            input.value = '';
+            loadLibrary();
         } catch (e) {
-            status.className = 'error';
-            status.textContent = 'Upload failed';
+            status.className = 'status error';
+            status.textContent = 'Upload failed: ' + e.message;
         }
     }
+
+    // ── Library ───────────────────────────────────────────────────────────────
     async function loadLibrary() {
         try {
             const res = await fetch('/library');
-            const files = await res.json();
-            const ul = document.getElementById('library');
-
-            if (files.length === 0) {
+            library   = await res.json();
+            const ul  = document.getElementById('libraryList');
+            if (library.length === 0) {
                 ul.innerHTML = '<li>No uploads yet</li>';
                 return;
             }
-
-            ul.innerHTML = files.map(f => `
+            ul.innerHTML = library.map(f => `
             <li>
-                ${f.name} (${f.type})
-                <button onclick="addToPlaylist('${f.name}')">+ Add</button>
-                <button onclick="deleteMedia('${f.name}')">Delete</button>
+                <input type="checkbox" class="lib-check" value="${esc(f.name)}"/>
+                <span>${esc(f.name)}</span>
+                <span class="tag ${f.type}">${f.type}</span>
+                <button class="danger" onclick="deleteMedia('${esc(f.name)}')">Delete</button>
             </li>
         `).join('');
         } catch (e) {
-            document.getElementById('library').innerHTML = '<li>Failed to load</li>';
+            document.getElementById('libraryList').innerHTML = '<li>Failed to load</li>';
         }
     }
 
-    async function removeFromPlaylist(event, filename) {
-        event.stopPropagation(); // prevent triggering selectFile
+    function getCheckedFiles() {
+        return [...document.querySelectorAll('.lib-check:checked')].map(cb => cb.value);
+    }
+
+    // ── Create Playlist ───────────────────────────────────────────────────────
+    async function createPlaylist() {
+        const name   = document.getElementById('playlistName').value.trim();
+        const status = document.getElementById('createStatus');
+        const files  = getCheckedFiles();
+
+        if (!name) {
+            status.className = 'status error';
+            status.textContent = 'Enter a playlist name';
+            return;
+        }
+        if (files.length === 0) {
+            status.className = 'status error';
+            status.textContent = 'Check at least one file from the library';
+            return;
+        }
+
+        // send as plain text: name|file1,file2,file3
+        const body = name + '|' + files.join(',');
+
         try {
-            const res = await fetch('/playlist/' + encodeURIComponent(filename), {
-                method: 'DELETE'
+            const res  = await fetch('/playlists', {
+                method: 'POST',
+                body: body
             });
-            const result = await res.json();
-            loadPlaylist();
+
+            const text = await res.text();
+            let result;
+            try { result = JSON.parse(text); }
+            catch (e) {
+                status.className = 'status error';
+                status.textContent = 'Server error: ' + text;
+                return;
+            }
+
+            if (res.ok) {
+                status.className = 'status';
+                status.textContent = '✓ Created: ' + result.name;
+                document.getElementById('playlistName').value = '';
+                document.querySelectorAll('.lib-check').forEach(cb => cb.checked = false);
+                loadPlaylists();
+            } else {
+                status.className = 'status error';
+                status.textContent = result.message || text;
+            }
         } catch (e) {
-            alert('Failed to remove from playlist');
+            status.className = 'status error';
+            status.textContent = 'Error: ' + e.message;
         }
     }
 
+    // ── Playlists ─────────────────────────────────────────────────────────────
+    async function loadPlaylists() {
+        try {
+            const res  = await fetch('/playlists');
+            playlists  = await res.json();
+            const ul   = document.getElementById('playlistList');
+            if (playlists.length === 0) {
+                ul.innerHTML = '<li>No playlists yet</li>';
+                document.getElementById('playlistDetail').style.display = 'none';
+                return;
+            }
+            ul.innerHTML = playlists.map(p => `
+            <li id="pl-${p.id}" onclick="openPlaylist(${p.id}, '${esc(p.name)}')">
+                <span><strong>${esc(p.name)}</strong> &nbsp;
+                    <span class="tag">${p.count} file${p.count !== 1 ? 's' : ''}</span>
+                </span>
+            </li>
+        `).join('');
+        } catch (e) {
+            document.getElementById('playlistList').innerHTML = '<li>Failed to load</li>';
+        }
+    }
+
+    function playNext() {
+        if (activePlaylistItems.length === 0) return;
+        const next = (currentItemIdx + 1) % activePlaylistItems.length;
+        selectItem(next);
+    }
+
+    function playPrev() {
+        if (activePlaylistItems.length === 0) return;
+        const prev = (currentItemIdx - 1 + activePlaylistItems.length) % activePlaylistItems.length;
+        selectItem(prev);
+    }
+
+    async function openPlaylist(id, name) {
+        activePlaylistId = id;
+        currentItemIdx   = -1;
+
+        // highlight
+        document.querySelectorAll('#playlistList li').forEach(li => li.classList.remove('active'));
+        const li = document.getElementById('pl-' + id);
+        if (li) li.classList.add('active');
+
+        try {
+            const res = await fetch('/playlists/' + id);
+            activePlaylistItems = await res.json();
+
+            document.getElementById('detailName').textContent = name;
+            const ul = document.getElementById('detailItems');
+
+            if (activePlaylistItems.length === 0) {
+                ul.innerHTML = '<li>No items</li>';
+            } else {
+                ul.innerHTML = activePlaylistItems.map((f, i) => `
+                <li id="item-${i}" onclick="selectItem(${i})">
+                    <span>
+                        ${esc(f.name)}
+                        <span class="tag ${f.type}">${f.type}</span>
+                    </span>
+                    <button class="danger" onclick="removeItem(event, '${esc(f.name)}')">Remove</button>
+                </li>
+            `).join('');
+            }
+
+            document.getElementById('playlistDetail').style.display = 'block';
+        } catch (e) {
+            alert('Failed to load playlist: ' + e.message);
+        }
+    }
+
+    async function deletePlaylist() {
+        if (activePlaylistId === -1) return;
+        if (!confirm('Delete this playlist?')) return;
+        try {
+            await fetch('/playlists/' + activePlaylistId, { method: 'DELETE' });
+            activePlaylistId = -1;
+            activePlaylistItems = [];
+            document.getElementById('playlistDetail').style.display = 'none';
+            clearPreview();
+            loadPlaylists();
+        } catch (e) {
+            alert('Failed to delete: ' + e.message);
+        }
+    }
+
+    async function removeItem(event, filename) {
+        event.stopPropagation();
+        if (activePlaylistId === -1) return;
+        try {
+            const res = await fetch('/playlists/' + activePlaylistId + '/items/' +
+                encodeURIComponent(filename), { method: 'DELETE' });
+            const result = await res.json();
+            if (!res.ok) {
+                alert(result.message || 'Cannot remove item');
+                return;
+            }
+            openPlaylist(activePlaylistId,
+                document.getElementById('detailName').textContent);
+        } catch (e) {
+            alert('Failed to remove: ' + e.message);
+        }
+    }
+
+    // ── Preview ───────────────────────────────────────────────────────────────
+    function selectItem(i) {
+        currentItemIdx = i;
+        document.querySelectorAll('#detailItems li').forEach(li => li.classList.remove('active'));
+        const li = document.getElementById('item-' + i);
+        if (li) li.classList.add('active');
+
+        const file = activePlaylistItems[i];
+        const box  = document.getElementById('previewBox');
+        const url  = '/uploads/' + encodeURIComponent(file.name);
+
+        document.getElementById('nowPlaying').textContent = 'Now playing: ' + file.name;
+
+        if (file.type === 'video') {
+            box.innerHTML = `<video controls autoplay style="max-width:100%;max-height:420px">
+            <source src="${url}"></video>`;
+        } else {
+            box.innerHTML = `<img src="${url}" style="max-width:100%;max-height:420px"/>`;
+        }
+    }
+
+    function clearPreview() {
+        document.getElementById('previewBox').innerHTML = 'Select a file';
+        document.getElementById('nowPlaying').textContent = 'Select a file from a playlist to preview';
+    }
+
+    // ── Delete media ──────────────────────────────────────────────────────────
     async function deleteMedia(filename) {
         if (!confirm('Delete ' + filename + ' permanently?')) return;
         try {
-            const res = await fetch('/uploads/' + encodeURIComponent(filename), {
-                method: 'DELETE'
-            });
-            const result = await res.json();
-            loadLibrary();  // refresh library
-            loadPlaylist(); // refresh playlist in case it was there
+            await fetch('/uploads/' + encodeURIComponent(filename), { method: 'DELETE' });
+            loadLibrary();
+            if (activePlaylistId !== -1)
+                openPlaylist(activePlaylistId,
+                    document.getElementById('detailName').textContent);
         } catch (e) {
-            alert('Failed to delete file');
+            alert('Failed to delete: ' + e.message);
         }
     }
 
-    async function addToPlaylist(filename) {
-        try {
-            const res = await fetch('/playlist/add', {
-                method: 'POST',
-                body: filename
-            });
-            const result = await res.json();
-            alert(result.status + ': ' + result.name);
-            loadPlaylist(); // refresh playlist
-        } catch (e) {
-            alert('Failed to add to playlist');
-        }
+    // ── Util ──────────────────────────────────────────────────────────────────
+    function esc(s) {
+        return String(s)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+            .replace(/'/g,'&#39;');
     }
 
-    loadPlaylist();
+    // ── Init ──────────────────────────────────────────────────────────────────
     loadLibrary();
+    loadPlaylists();
 </script>
-
 </body>
 </html>
