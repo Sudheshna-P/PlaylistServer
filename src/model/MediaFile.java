@@ -13,7 +13,4 @@ public class MediaFile {
     public String getName() { return name; }
     public String getType() { return type; }
 
-    public String toJson() {
-        return "{\"name\":\"" + name + "\",\"type\":\"" + type + "\"}";
-    }
 }

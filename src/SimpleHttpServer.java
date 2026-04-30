@@ -6,8 +6,11 @@ import http.Router;
 import model.LibraryModel;
 import model.PlaylistModel;
 import model.UploadModel;
+import service.LibraryService;
+import service.PlaylistService;
+import service.UploadService;
 import storage.Database;
-import storage.PlaylistStore;
+import storage.PlaylistStoreDB;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -16,7 +19,6 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -24,12 +26,11 @@ import java.util.concurrent.Executors;
 import logger.Logger;
 import logger.LoggerManager;
 import logger.LoggerFactory;
-import storage.PlaylistStoreDB;
 
 public class SimpleHttpServer {
 
     private static final int PORT = 8080;
-    public static final String BASE    = "/home/sudheshna/IdeaProjects/PlaylistServer/src";
+    public static final String BASE = "/home/sudheshna/IdeaProjects/PlaylistServer/src";
     public static final String UPLOADS = BASE + "/uploads";
 
     private final LoggerManager logger;
@@ -42,47 +43,38 @@ public class SimpleHttpServer {
         try { Files.createDirectories(Paths.get(UPLOADS)); }
         catch (IOException e) { throw new RuntimeException("Cannot create uploads dir", e); }
 
-        Logger fileLogger = LoggerFactory.getFileLogger(BASE + "/logs/server.log");
+        Logger fileLogger    = LoggerFactory.getFileLogger(BASE + "/logs/server.log");
         Logger consoleLogger = LoggerFactory.getConsoleLogger();
         this.logger = new LoggerManager(List.of(fileLogger, consoleLogger));
+        LoggerManager.setInstance(this.logger);
 
-        // models and storage
-        LibraryModel libraryModel    = new LibraryModel(UPLOADS);
-        UploadModel uploadModel      = new UploadModel(UPLOADS);
+        // models
+        LibraryModel libraryModel = new LibraryModel(UPLOADS);
+        UploadModel uploadModel   = new UploadModel(UPLOADS);
+
+        // storage
         Database db;
         try { db = new Database(BASE); }
         catch (Exception e) { throw new RuntimeException("Cannot init database", e); }
         PlaylistStoreDB playlistStoreDB = new PlaylistStoreDB(db);
-        PlaylistModel playlistModel     = new PlaylistModel(playlistStoreDB, libraryModel);
+
+        // services
+        LibraryService libraryService   = new LibraryService(libraryModel);
+        PlaylistService playlistService = new PlaylistService(playlistStoreDB);
+        UploadService uploadService     = new UploadService(uploadModel);
 
         // controllers
-        UploadController uploadController                 = new UploadController(UPLOADS, uploadModel, ioPool);
-        LibraryController libraryController               = new LibraryController(libraryModel);
-        PlaylistController playlistController             = new PlaylistController(playlistModel);
-        PlaylistAddController playlistAddController       = new PlaylistAddController(playlistModel);
-        PlaylistRemoveController playlistRemoveController = new PlaylistRemoveController(playlistModel);
-        FileController fileController                     = new FileController(ioPool);
-        DeleteMediaController deleteMediaController       = new DeleteMediaController(UPLOADS);
-        PlaylistCreateController playlistCreateController = new PlaylistCreateController(playlistModel);
-        PlaylistListController playlistListController     = new PlaylistListController(playlistModel);
-        PlaylistGetController playlistGetController       = new PlaylistGetController(playlistModel);
-        PlaylistEditController playlistEditController     = new PlaylistEditController(playlistModel);
-        PlaylistDeleteController playlistDeleteController = new PlaylistDeleteController(playlistModel);
+        UploadController uploadController     = new UploadController(UPLOADS, uploadService, ioPool);
+        LibraryController libraryController   = new LibraryController(libraryService);
+        PlaylistController playlistController = new PlaylistController(playlistService);
+        FileController fileController         = new FileController(ioPool);
 
         // router
         this.router = new Router(
                 uploadController,
                 libraryController,
                 playlistController,
-                playlistAddController,
-                playlistRemoveController,
-                fileController,
-                deleteMediaController,
-                playlistCreateController,
-                playlistListController,
-                playlistGetController,
-                playlistEditController,
-                playlistDeleteController
+                fileController
         );
     }
 
@@ -112,9 +104,20 @@ public class SimpleHttpServer {
                 : new UploadController.ReadAcc();
         acc.buf.write(buffer.array(), 0, buffer.limit());
 
+        // header size check — must be before processing
+        if (acc.buf.size() > 8192) {
+            try {
+                client.write(ByteBuffer.wrap(
+                        HttpResponse.error(431, "Request Header Fields Too Large",
+                                "Headers too big").getBytes()));
+            } catch (IOException ignored) {}
+            try { client.close(); } catch (IOException ignored) {}
+            return;
+        }
+
         key.attach(acc);
 
-        byte[] data   = acc.buf.toByteArray();
+        byte[] data = acc.buf.toByteArray();
         int processed = 0;
 
         while (true) {
@@ -132,13 +135,13 @@ public class SimpleHttpServer {
             if (parts.length < 2) { HttpResponse.cancelAndClose(key, client); return; }
 
             String method = parts[0];
-            String path   = parts[1];
+            String path = parts[1];
             int qIdx = path.indexOf('?');
             if (qIdx != -1) path = path.substring(0, qIdx);
 
             logger.info("Request: " + requestLine);
 
-            String  connHdr   = HttpParser.extractHeader(headers, "Connection");
+            String connHdr = HttpParser.extractHeader(headers, "Connection");
             boolean keepAlive = !"close".equalsIgnoreCase(connHdr);
 
             ResponseWriter writer = new ResponseWriter(key, client, keepAlive);
@@ -159,12 +162,11 @@ public class SimpleHttpServer {
 
     private void uploadController(SelectionKey key, SocketChannel client,
                                   Object attachment, ByteBuffer buffer) throws IOException {
-        // find the upload controller from router to continue upload
         router.continueUpload(key, client,
                 (UploadController.UploadState) attachment, buffer);
     }
 
-    public static void main(String[] args) throws SQLException {
+    public static void main(String[] args) {
         SimpleHttpServer server = new SimpleHttpServer();
         server.logger.info("Starting server on port " + PORT);
         new ServerNIO(PORT, server::handleClient).start();

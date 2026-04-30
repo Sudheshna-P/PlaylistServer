@@ -3,6 +3,7 @@ package controller;
 import http.HttpParser;
 import http.HttpResponse;
 import model.UploadModel;
+import service.UploadService;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -31,8 +32,8 @@ public class UploadController {
     private static final long MAX_UPLOAD_SIZE = 500L * 1024 * 1024;
 
     private final String uploadsPath;
-    private final UploadModel uploadModel;
     private final ExecutorService ioPool;
+    private final UploadService uploadService;
 
     public static class UploadState {
         public final Path tempFile;
@@ -52,11 +53,11 @@ public class UploadController {
         }
     }
 
-    public UploadController(String uploadsPath, UploadModel uploadModel,
+    public UploadController(String uploadsPath, UploadService uploadService,
                             ExecutorService ioPool) {
-        this.uploadsPath = uploadsPath;
-        this.uploadModel = uploadModel;
-        this.ioPool = ioPool;
+        this.uploadsPath   = uploadsPath;
+        this.uploadService = uploadService;
+        this.ioPool        = ioPool;
     }
 
     public int beginUpload(SelectionKey key, SocketChannel client,
@@ -155,7 +156,7 @@ public class UploadController {
 
                 List<String> saved  = new ArrayList<>();
                 List<String> errors = new ArrayList<>();
-                uploadModel.parse(body, state.boundary, saved, errors);
+                uploadService.parse(body, state.boundary, saved, errors);
                 sendUploadResponse(client, key, saved, errors, state.keepAlive);
             } catch (Exception e) {
                 try { client.close(); } catch (IOException ignored) {}

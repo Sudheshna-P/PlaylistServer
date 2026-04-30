@@ -1,9 +1,13 @@
 package http;
 
-import controller.*;
+import controller.FileController;
+import controller.LibraryController;
+import controller.PlaylistController;
+import controller.UploadController;
 import util.PathResolver;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
@@ -15,40 +19,16 @@ public class Router {
     private final UploadController uploadController;
     private final LibraryController libraryController;
     private final PlaylistController playlistController;
-    private final PlaylistAddController playlistAddController;
-    private final PlaylistRemoveController playlistRemoveController;
     private final FileController fileController;
-    private final DeleteMediaController deleteMediaController;
-    private final PlaylistCreateController playlistCreateController;
-    private final PlaylistListController playlistListController;
-    private final PlaylistGetController playlistGetController;
-    private final PlaylistEditController playlistEditController;
-    private final PlaylistDeleteController playlistDeleteController;
 
     public Router(UploadController uploadController,
                   LibraryController libraryController,
                   PlaylistController playlistController,
-                  PlaylistAddController playlistAddController,
-                  PlaylistRemoveController playlistRemoveController,
-                  FileController fileController,
-                  DeleteMediaController deleteMediaController,
-                  PlaylistCreateController playlistCreateController,
-                  PlaylistListController playlistListController,
-                  PlaylistGetController playlistGetController,
-                  PlaylistEditController playlistEditController,
-                  PlaylistDeleteController playlistDeleteController) {
-        this.uploadController          = uploadController;
-        this.libraryController         = libraryController;
-        this.playlistController        = playlistController;
-        this.playlistAddController     = playlistAddController;
-        this.playlistRemoveController  = playlistRemoveController;
-        this.fileController            = fileController;
-        this.deleteMediaController     = deleteMediaController;
-        this.playlistCreateController  = playlistCreateController;
-        this.playlistListController    = playlistListController;
-        this.playlistGetController     = playlistGetController;
-        this.playlistEditController    = playlistEditController;
-        this.playlistDeleteController  = playlistDeleteController;
+                  FileController fileController) {
+        this.uploadController  = uploadController;
+        this.libraryController = libraryController;
+        this.playlistController = playlistController;
+        this.fileController    = fileController;
     }
 
     public int dispatch(String method, String path,
@@ -56,108 +36,84 @@ public class Router {
                         String headers, byte[] data,
                         int end) throws IOException {
 
+        // ── POST routes ───────────────────────────────────────────────────
+
         // POST /upload
         if (method.equals("POST") && path.equals("/upload")) {
             int alreadyBuffered = data.length - end;
-            int result = uploadController.beginUpload(
+            return uploadController.beginUpload(
                     writer.getKey(), writer.getClient(),
                     data, headers, end, alreadyBuffered, writer.isKeepAlive());
-            return result;
         }
 
         // POST /playlists — create new playlist
         if (method.equals("POST") && path.equals("/playlists")) {
-            String contentLength = HttpParser.extractHeader(headers, "Content-Length");
-            int bodyLength = contentLength != null
-                    ? Integer.parseInt(contentLength.trim()) : 0;
-            String body = new String(data, end, bodyLength, StandardCharsets.UTF_8);
-            playlistCreateController.handle(writer, body);
-            return end + bodyLength;
+            String body = readBody(headers, data, end);
+            playlistController.create(writer, body);
+            return end + bodyLength(headers);
         }
 
-        // POST /playlists/:id/add — add item to existing playlist
+        // POST /playlists/:id/add
         if (method.equals("POST") && path.matches("/playlists/\\d+/add")) {
-            int id = extractId(path, "/playlists/", "/add");
-            String contentLength = HttpParser.extractHeader(headers, "Content-Length");
-            int bodyLength = contentLength != null
-                    ? Integer.parseInt(contentLength.trim()) : 0;
-            String body = new String(data, end, bodyLength, StandardCharsets.UTF_8);
-            playlistEditController.handleAdd(writer, id, body);
-            return end + bodyLength;
+            int id = extractMiddleId(path);
+            String body = readBody(headers, data, end);
+            playlistController.addItem(writer, id, body);
+            return end + bodyLength(headers);
         }
 
-        // POST /playlist/add — old single playlist add (kept for backward compat)
-        if (method.equals("POST") && path.equals("/playlist/add")) {
-            String contentLength = HttpParser.extractHeader(headers, "Content-Length");
-            int bodyLength = contentLength != null
-                    ? Integer.parseInt(contentLength.trim()) : 0;
-            String body = new String(data, end, bodyLength, StandardCharsets.UTF_8);
-            playlistAddController.handle(writer, body);
-            return end + bodyLength;
-        }
+        // ── DELETE routes ─────────────────────────────────────────────────
 
-        // DELETE /playlists/:id — delete entire playlist
-        if (method.equals("DELETE") && path.matches("/playlists/\\d+")) {
-            int id = extractId(path, "/playlists/", null);
-            playlistDeleteController.handle(writer, id);
-            return end;
-        }
-
-        // DELETE /playlists/:id/items/:name — remove item from playlist
+        // DELETE /playlists/:id/items/:name
         if (method.equals("DELETE") && path.matches("/playlists/\\d+/items/.+")) {
             String[] segments = path.split("/");
             int id = Integer.parseInt(segments[2]);
             String filename = segments[4];
-            playlistEditController.handleRemove(writer, id, filename);
+            playlistController.removeItem(writer, id, filename);
             return end;
         }
 
-        // DELETE /playlist/:name — old single playlist remove
-        if (method.equals("DELETE") && path.startsWith("/playlist/")) {
-            String filename = path.substring("/playlist/".length());
-            playlistRemoveController.handle(writer, filename);
+        // DELETE /playlists/:id
+        if (method.equals("DELETE") && path.matches("/playlists/\\d+")) {
+            int id = extractLastId(path);
+            playlistController.delete(writer, id);
             return end;
         }
 
         // DELETE /uploads/:name
         if (method.equals("DELETE") && path.startsWith("/uploads/")) {
             String filename = path.substring("/uploads/".length());
-            deleteMediaController.handle(writer, filename);
+            libraryController.delete(writer, filename);
             return end;
         }
 
-        // non GET methods
+        // ── non GET ───────────────────────────────────────────────────────
+
         if (!method.equals("GET")) {
             writer.write(HttpResponse.methodNotAllowed().getBytes());
             if (!writer.isKeepAlive()) writer.close();
             return end;
         }
 
-        // GET routes
+        // ── GET routes ────────────────────────────────────────────────────
+
         if (path.equals("/")) path = "/index.html";
 
-        // GET /playlists — list all playlists
+        // GET /playlists
         if (path.equals("/playlists")) {
-            playlistListController.handle(writer);
+            playlistController.list(writer);
             return end;
         }
 
-        // GET /playlists/:id — get one playlist items
+        // GET /playlists/:id
         if (path.matches("/playlists/\\d+")) {
-            int id = extractId(path, "/playlists/", null);
-            playlistGetController.handle(writer, id);
+            int id = extractLastId(path);
+            playlistController.get(writer, id);
             return end;
         }
 
-        // GET /playlist — old single playlist
-        if (path.equals("/playlist")) {
-            playlistController.handle(writer);
-            return end;
-        }
-
-        // GET /uploads or /library
-        if (path.equals("/uploads") || path.equals("/library")) {
-            libraryController.handle(writer);
+        // GET /library or /uploads
+        if (path.equals("/library") || path.equals("/uploads")) {
+            libraryController.list(writer);
             return end;
         }
 
@@ -186,13 +142,32 @@ public class Router {
 
     public void continueUpload(SelectionKey key, SocketChannel client,
                                UploadController.UploadState state,
-                               java.nio.ByteBuffer buffer) throws IOException {
+                               ByteBuffer buffer) throws IOException {
         uploadController.continueUpload(key, client, state, buffer);
     }
 
-    private int extractId(String path, String prefix, String suffix) {
-        String s = path.substring(prefix.length());
-        if (suffix != null) s = s.substring(0, s.indexOf(suffix));
-        return Integer.parseInt(s);
+    // ── helpers ───────────────────────────────────────────────────────────
+
+    private String readBody(String headers, byte[] data, int end) {
+        int length = bodyLength(headers);
+        if (length <= 0) return "";
+        return new String(data, end, Math.min(length, data.length - end),
+                StandardCharsets.UTF_8);
+    }
+
+    private int bodyLength(String headers) {
+        String cl = HttpParser.extractHeader(headers, "Content-Length");
+        if (cl == null) return 0;
+        try { return Integer.parseInt(cl.trim()); }
+        catch (NumberFormatException e) { return 0; }
+    }
+
+    private int extractLastId(String path) {
+        String[] segments = path.split("/");
+        return Integer.parseInt(segments[segments.length - 1]);
+    }
+
+    private int extractMiddleId(String path) {
+        return Integer.parseInt(path.split("/")[2]);
     }
 }

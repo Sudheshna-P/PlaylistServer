@@ -27,6 +27,10 @@ public class LibraryModel {
         return files;
     }
 
+    public String getUploadsPath() {
+        return uploadsPath;
+    }
+
     private static String detectType(String name) {
         String lower = name.toLowerCase(Locale.ROOT);
         if (lower.endsWith(".mp4") || lower.endsWith(".webm")

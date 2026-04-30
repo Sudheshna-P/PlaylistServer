@@ -19,7 +19,7 @@ public class UploadModel {
     public void parse(byte[] body, String boundary,
                       List<String> saved, List<String> errors) {
 
-        byte[] delimiter     = ("\r\n--" + boundary).getBytes();
+        byte[] delimiter = ("\r\n--" + boundary).getBytes();
         byte[] firstBoundary = ("--"     + boundary).getBytes();
 
         int pos = HttpParser.indexOf(body, firstBoundary, 0);
@@ -56,7 +56,7 @@ public class UploadModel {
 
             Path savePath = Paths.get(uploadsPath, filename);
             if (Files.exists(savePath)) {
-                String ts  = String.valueOf(System.currentTimeMillis());
+                String ts = String.valueOf(System.currentTimeMillis());
                 String ext = filename.contains(".")
                         ? filename.substring(filename.lastIndexOf('.')) : "";
                 String base = filename.contains(".")

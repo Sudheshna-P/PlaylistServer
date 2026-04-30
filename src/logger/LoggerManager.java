@@ -5,6 +5,15 @@ import java.util.List;
 public class LoggerManager {
     private final List<Logger> loggers;
 
+    private static LoggerManager instance;
+
+    public static void setInstance(LoggerManager mgr) {
+        instance = mgr;
+    }
+
+    public static LoggerManager getInstance() {
+        return instance;
+    }
     /**
      * Constructs a LoggerManager with the provided list of loggers
      * @param loggers - loggers
