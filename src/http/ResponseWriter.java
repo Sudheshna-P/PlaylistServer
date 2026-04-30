@@ -46,8 +46,4 @@ public class ResponseWriter {
             key.selector().wakeup();
         }
     }
-
-    // package-private — only Router and SimpleHttpServer use these
-    SelectionKey getKey() { return key; }
-    SocketChannel getClient() { return client; }
 }

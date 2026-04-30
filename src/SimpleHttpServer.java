@@ -1,10 +1,6 @@
 import controller.*;
-import http.HttpParser;
-import http.HttpResponse;
-import http.ResponseWriter;
-import http.Router;
+import http.*;
 import model.LibraryModel;
-import model.PlaylistModel;
 import model.UploadModel;
 import service.LibraryService;
 import service.PlaylistService;
@@ -36,6 +32,7 @@ public class SimpleHttpServer {
     private final LoggerManager logger;
     private final ExecutorService ioPool = Executors.newFixedThreadPool(8);
     private final Router router;
+    private final UploadController uploadController;
 
     public SimpleHttpServer() {
         try { Files.createDirectories(Paths.get(BASE + "/logs")); }
@@ -43,14 +40,14 @@ public class SimpleHttpServer {
         try { Files.createDirectories(Paths.get(UPLOADS)); }
         catch (IOException e) { throw new RuntimeException("Cannot create uploads dir", e); }
 
-        Logger fileLogger    = LoggerFactory.getFileLogger(BASE + "/logs/server.log");
+        Logger fileLogger = LoggerFactory.getFileLogger(BASE + "/logs/server.log");
         Logger consoleLogger = LoggerFactory.getConsoleLogger();
         this.logger = new LoggerManager(List.of(fileLogger, consoleLogger));
         LoggerManager.setInstance(this.logger);
 
         // models
         LibraryModel libraryModel = new LibraryModel(UPLOADS);
-        UploadModel uploadModel   = new UploadModel(UPLOADS);
+        UploadModel uploadModel = new UploadModel(UPLOADS);
 
         // storage
         Database db;
@@ -59,19 +56,18 @@ public class SimpleHttpServer {
         PlaylistStoreDB playlistStoreDB = new PlaylistStoreDB(db);
 
         // services
-        LibraryService libraryService   = new LibraryService(libraryModel);
+        LibraryService libraryService = new LibraryService(libraryModel);
         PlaylistService playlistService = new PlaylistService(playlistStoreDB);
-        UploadService uploadService     = new UploadService(uploadModel);
+        UploadService uploadService = new UploadService(uploadModel);
 
         // controllers
-        UploadController uploadController     = new UploadController(UPLOADS, uploadService, ioPool);
-        LibraryController libraryController   = new LibraryController(libraryService);
+        this.uploadController = new UploadController(UPLOADS, uploadService, ioPool);
+        LibraryController libraryController = new LibraryController(libraryService);
         PlaylistController playlistController = new PlaylistController(playlistService);
-        FileController fileController         = new FileController(ioPool);
+        FileController fileController = new FileController(ioPool);
 
         // router
         this.router = new Router(
-                uploadController,
                 libraryController,
                 playlistController,
                 fileController
@@ -83,33 +79,37 @@ public class SimpleHttpServer {
 
         ByteBuffer buffer = ByteBuffer.allocate(65536);
         int bytesRead;
-        try {
-            bytesRead = client.read(buffer);
-        } catch (IOException e) {
-            HttpResponse.cancelAndClose(key, client); return;
-        }
+        try { bytesRead = client.read(buffer); }
+        catch (IOException e) { HttpResponse.cancelAndClose(key, client); return; }
         if (bytesRead == -1) { HttpResponse.cancelAndClose(key, client); return; }
         buffer.flip();
 
         Object attachment = key.attachment();
 
-        // upload in progress
-        if (attachment instanceof UploadController.UploadState) {
-            uploadController(key, client, attachment, buffer);
+        if (attachment instanceof UploadState) {
+            UploadState state = (UploadState) attachment;
+            boolean done = uploadController(state, buffer);
+            if (done) {
+                key.interestOps(0); // pause reads while processing
+                uploadController.finishUpload(state, () -> {
+                    key.attach(new ReadAcc());
+                    if (key.isValid()) {
+                        key.interestOps(SelectionKey.OP_READ);
+                        key.selector().wakeup();
+                    }
+                });
+            }
             return;
         }
 
-        UploadController.ReadAcc acc = (attachment instanceof UploadController.ReadAcc)
-                ? (UploadController.ReadAcc) attachment
-                : new UploadController.ReadAcc();
+        ReadAcc acc = (attachment instanceof ReadAcc) ? (ReadAcc) attachment : new ReadAcc();
         acc.buf.write(buffer.array(), 0, buffer.limit());
 
-        // header size check — must be before processing
         if (acc.buf.size() > 8192) {
             try {
-                client.write(ByteBuffer.wrap(
-                        HttpResponse.error(431, "Request Header Fields Too Large",
-                                "Headers too big").getBytes()));
+                client.write(ByteBuffer.wrap(HttpResponse.error(431,
+                        "Request Header Fields Too Large",
+                        "Headers too big").getBytes()));
             } catch (IOException ignored) {}
             try { client.close(); } catch (IOException ignored) {}
             return;
@@ -117,7 +117,7 @@ public class SimpleHttpServer {
 
         key.attach(acc);
 
-        byte[] data = acc.buf.toByteArray();
+        byte[] data   = acc.buf.toByteArray();
         int processed = 0;
 
         while (true) {
@@ -135,24 +135,51 @@ public class SimpleHttpServer {
             if (parts.length < 2) { HttpResponse.cancelAndClose(key, client); return; }
 
             String method = parts[0];
-            String path = parts[1];
+            String path   = parts[1];
             int qIdx = path.indexOf('?');
             if (qIdx != -1) path = path.substring(0, qIdx);
 
             logger.info("Request: " + requestLine);
 
-            String connHdr = HttpParser.extractHeader(headers, "Connection");
+            String  connHdr   = HttpParser.extractHeader(headers, "Connection");
             boolean keepAlive = !"close".equalsIgnoreCase(connHdr);
 
             ResponseWriter writer = new ResponseWriter(key, client, keepAlive);
+
+            // handle upload specially since it needs key attachment
+            if (method.equals("POST") && path.equals("/upload")) {
+                int alreadyBuffered = data.length - end;
+                Object result = uploadController.beginUpload(writer, headers, data, end, alreadyBuffered);
+
+                if (result instanceof UploadState) {
+                    UploadState state = (UploadState) result;
+                    key.attach(state);
+                    if (state.written >= state.totalBodyBytes) {
+                        key.interestOps(0);
+                        uploadController.finishUpload(state, () -> {
+                            key.attach(new ReadAcc());
+                            if (key.isValid()) {
+                                key.interestOps(SelectionKey.OP_READ);
+                                key.selector().wakeup();
+                            }
+                        });
+                    }
+                    break;
+                }
+                if ("error".equals(result)) {
+                    if (!keepAlive) HttpResponse.cancelAndClose(key, client);
+                }
+                processed = end;
+                continue;
+            }
+
             int result = router.dispatch(method, path, writer, headers, data, end);
             if (result == -1) return;
             processed = result;
-            if (key.attachment() instanceof UploadController.UploadState) break;
         }
 
-        if (!(key.attachment() instanceof UploadController.UploadState)) {
-            UploadController.ReadAcc newAcc = new UploadController.ReadAcc();
+        if (!(key.attachment() instanceof UploadState)) {
+            ReadAcc newAcc = new ReadAcc();
             if (processed < data.length)
                 newAcc.buf.write(data, processed, data.length - processed);
             key.attach(newAcc);
@@ -160,11 +187,11 @@ public class SimpleHttpServer {
         }
     }
 
-    private void uploadController(SelectionKey key, SocketChannel client,
-                                  Object attachment, ByteBuffer buffer) throws IOException {
-        router.continueUpload(key, client,
-                (UploadController.UploadState) attachment, buffer);
+    private boolean uploadController(UploadState state, ByteBuffer buffer)
+            throws IOException {
+        return uploadController.continueUpload(state, buffer);
     }
+
 
     public static void main(String[] args) {
         SimpleHttpServer server = new SimpleHttpServer();

@@ -12,8 +12,6 @@ public class PlaylistStoreDB {
         this.connection = db.getConnection();
     }
 
-    // ── playlists table ───────────────────────────────────────────────────
-
     public int createPlaylist(String name) throws SQLException {
         String sql = "INSERT INTO playlists (name) VALUES (?)";
         try (PreparedStatement ps = connection.prepareStatement(sql,
@@ -78,7 +76,7 @@ public class PlaylistStoreDB {
         }
     }
 
-    // ── playlist_items table ──────────────────────────────────────────────
+    //playlist_items table
 
     public void addItem(int playlistId, String name, String type) throws SQLException {
         // get current max position
@@ -143,13 +141,4 @@ public class PlaylistStoreDB {
         }
         return items;
     }
-
-    // kept for backward compat — old single playlist methods
-    public List<String> load() throws SQLException {
-        return new ArrayList<>();
-    }
-
-    public void add(String name, String type) throws SQLException {}
-    public void remove(String name) throws SQLException {}
-    public boolean exists(String name) throws SQLException { return false; }
 }

@@ -1,11 +1,9 @@
 package controller;
 
-import http.HttpResponse;
 import http.ResponseWriter;
 import util.ContentType;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -79,7 +77,7 @@ public class FileController {
         long start = 0, endByte = fileSize - 1;
         try {
             String[] parts = rangeHeader.substring(6).trim().split("-", 2);
-            if (!parts[0].isEmpty()) start   = Long.parseLong(parts[0].trim());
+            if (!parts[0].isEmpty()) start = Long.parseLong(parts[0].trim());
             if (parts.length > 1 && !parts[1].isEmpty())
                 endByte = Long.parseLong(parts[1].trim());
         } catch (Exception ignored) {}

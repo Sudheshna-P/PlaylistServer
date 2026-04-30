@@ -20,7 +20,7 @@ public class UploadModel {
                       List<String> saved, List<String> errors) {
 
         byte[] delimiter = ("\r\n--" + boundary).getBytes();
-        byte[] firstBoundary = ("--"     + boundary).getBytes();
+        byte[] firstBoundary = ("--" + boundary).getBytes();
 
         int pos = HttpParser.indexOf(body, firstBoundary, 0);
         if (pos == -1) { errors.add("Malformed multipart body"); return; }

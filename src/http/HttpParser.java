@@ -1,5 +1,4 @@
 package http;
-//import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 public class HttpParser {

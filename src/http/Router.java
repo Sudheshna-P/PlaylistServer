@@ -3,98 +3,91 @@ package http;
 import controller.FileController;
 import controller.LibraryController;
 import controller.PlaylistController;
-import controller.UploadController;
 import util.PathResolver;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.SocketChannel;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 public class Router {
 
-    private final UploadController uploadController;
     private final LibraryController libraryController;
     private final PlaylistController playlistController;
     private final FileController fileController;
 
-    public Router(UploadController uploadController,
-                  LibraryController libraryController,
+    public Router(LibraryController libraryController,
                   PlaylistController playlistController,
                   FileController fileController) {
-        this.uploadController  = uploadController;
         this.libraryController = libraryController;
         this.playlistController = playlistController;
-        this.fileController    = fileController;
+        this.fileController = fileController;
     }
 
-    public int dispatch(String method, String path,
-                        ResponseWriter writer,
-                        String headers, byte[] data,
-                        int end) throws IOException {
+    public int dispatch(String method, String path, ResponseWriter writer,
+                        String headers, byte[] data, int end) throws IOException {
 
-        // ── POST routes ───────────────────────────────────────────────────
+        String[] segments = path.split("/");
 
-        // POST /upload
-        if (method.equals("POST") && path.equals("/upload")) {
-            int alreadyBuffered = data.length - end;
-            return uploadController.beginUpload(
-                    writer.getKey(), writer.getClient(),
-                    data, headers, end, alreadyBuffered, writer.isKeepAlive());
-        }
+        if (method.equals("POST")) {
 
-        // POST /playlists — create new playlist
-        if (method.equals("POST") && path.equals("/playlists")) {
-            String body = readBody(headers, data, end);
-            playlistController.create(writer, body);
-            return end + bodyLength(headers);
-        }
+            // POST /playlists
+            if (path.equals("/playlists")) {
+                String body = readBody(headers, data, end);
+                playlistController.create(writer, body);
+                return end + bodyLength(headers);
+            }
 
-        // POST /playlists/:id/add
-        if (method.equals("POST") && path.matches("/playlists/\\d+/add")) {
-            int id = extractMiddleId(path);
-            String body = readBody(headers, data, end);
-            playlistController.addItem(writer, id, body);
-            return end + bodyLength(headers);
-        }
+            // POST /playlists/:id/add
+            if (segments.length == 4
+                    && segments[1].equals("playlists")
+                    && isNumeric(segments[2])
+                    && segments[3].equals("add")) {
+                String body = readBody(headers, data, end);
+                playlistController.addItem(writer, segments[2], body);
+                return end + bodyLength(headers);
+            }
 
-        // ── DELETE routes ─────────────────────────────────────────────────
-
-        // DELETE /playlists/:id/items/:name
-        if (method.equals("DELETE") && path.matches("/playlists/\\d+/items/.+")) {
-            String[] segments = path.split("/");
-            int id = Integer.parseInt(segments[2]);
-            String filename = segments[4];
-            playlistController.removeItem(writer, id, filename);
+            writer.write(HttpResponse.methodNotAllowed().getBytes());
+            if (!writer.isKeepAlive()) writer.close();
             return end;
         }
 
-        // DELETE /playlists/:id
-        if (method.equals("DELETE") && path.matches("/playlists/\\d+")) {
-            int id = extractLastId(path);
-            playlistController.delete(writer, id);
+        if (method.equals("DELETE")) {
+
+            // DELETE /playlists/:id/items/:name
+            if (segments.length == 5
+                    && segments[1].equals("playlists")
+                    && isNumeric(segments[2])
+                    && segments[3].equals("items")) {
+                playlistController.removeItem(writer, segments[2], segments[4]);
+                return end;
+            }
+
+            // DELETE /playlists/:id
+            if (segments.length == 3
+                    && segments[1].equals("playlists")
+                    && isNumeric(segments[2])) {
+                playlistController.delete(writer, segments[2]);
+                return end;
+            }
+
+            // DELETE /uploads/:name
+            if (segments.length == 3
+                    && segments[1].equals("uploads")) {
+                libraryController.delete(writer, segments[2]);
+                return end;
+            }
+
+            writer.write(HttpResponse.methodNotAllowed().getBytes());
+            if (!writer.isKeepAlive()) writer.close();
             return end;
         }
-
-        // DELETE /uploads/:name
-        if (method.equals("DELETE") && path.startsWith("/uploads/")) {
-            String filename = path.substring("/uploads/".length());
-            libraryController.delete(writer, filename);
-            return end;
-        }
-
-        // ── non GET ───────────────────────────────────────────────────────
 
         if (!method.equals("GET")) {
             writer.write(HttpResponse.methodNotAllowed().getBytes());
             if (!writer.isKeepAlive()) writer.close();
             return end;
         }
-
-        // ── GET routes ────────────────────────────────────────────────────
 
         if (path.equals("/")) path = "/index.html";
 
@@ -105,13 +98,14 @@ public class Router {
         }
 
         // GET /playlists/:id
-        if (path.matches("/playlists/\\d+")) {
-            int id = extractLastId(path);
-            playlistController.get(writer, id);
+        if (segments.length == 3
+                && segments[1].equals("playlists")
+                && isNumeric(segments[2])) {
+            playlistController.get(writer, segments[2]);
             return end;
         }
 
-        // GET /library or /uploads
+        // GET /library
         if (path.equals("/library") || path.equals("/uploads")) {
             libraryController.list(writer);
             return end;
@@ -140,19 +134,12 @@ public class Router {
         return end;
     }
 
-    public void continueUpload(SelectionKey key, SocketChannel client,
-                               UploadController.UploadState state,
-                               ByteBuffer buffer) throws IOException {
-        uploadController.continueUpload(key, client, state, buffer);
-    }
-
-    // ── helpers ───────────────────────────────────────────────────────────
-
     private String readBody(String headers, byte[] data, int end) {
         int length = bodyLength(headers);
-        if (length <= 0) return "";
-        return new String(data, end, Math.min(length, data.length - end),
-                StandardCharsets.UTF_8);
+        if (length <= 0 || end >= data.length) return "";
+        return new String(data, end,
+                Math.min(length, data.length - end),
+                java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private int bodyLength(String headers) {
@@ -162,12 +149,8 @@ public class Router {
         catch (NumberFormatException e) { return 0; }
     }
 
-    private int extractLastId(String path) {
-        String[] segments = path.split("/");
-        return Integer.parseInt(segments[segments.length - 1]);
-    }
-
-    private int extractMiddleId(String path) {
-        return Integer.parseInt(path.split("/")[2]);
+    private boolean isNumeric(String s) {
+        try { Integer.parseInt(s); return true; }
+        catch (NumberFormatException e) { return false; }
     }
 }

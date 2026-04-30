@@ -12,8 +12,7 @@ public class UploadService {
         this.uploadModel = uploadModel;
     }
 
-    public void parse(byte[] body, String boundary,
-                      List<String> saved, List<String> errors) {
+    public void parse(byte[] body, String boundary, List<String> saved, List<String> errors) {
         uploadModel.parse(body, boundary, saved, errors);
     }
 }

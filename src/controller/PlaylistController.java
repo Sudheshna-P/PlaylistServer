@@ -45,22 +45,6 @@ public class PlaylistController {
         }
     }
 
-    // GET /playlists/:id
-    public void get(ResponseWriter writer, int id) {
-        try {
-            List<MediaFile> files = playlistService.getItems(id);
-            List<String> items = new ArrayList<>();
-            for (MediaFile f : files) {
-                items.add(JsonWriter.object("name", f.getName(), "type", f.getType()));
-            }
-            sendJson(writer, 200, "OK", JsonWriter.array(items));
-        } catch (ServiceException e) {
-            sendError(writer, e);
-        } catch (Exception e) {
-            log("get", e);
-            sendServerError(writer);
-        }
-    }
 
     // POST /playlists
     public void create(ResponseWriter writer, String body) {
@@ -93,9 +77,28 @@ public class PlaylistController {
         }
     }
 
-    // POST /playlists/:id/add
-    public void addItem(ResponseWriter writer, int id, String body) {
+    // GET /playlists/:id
+    public void get(ResponseWriter writer, String rawId) {
         try {
+            int id = parseId(rawId);
+            List<MediaFile> files = playlistService.getItems(id);
+            List<String> items = new ArrayList<>();
+            for (MediaFile f : files) {
+                items.add(JsonWriter.object("name", f.getName(), "type", f.getType()));
+            }
+            sendJson(writer, 200, "OK", JsonWriter.array(items));
+        } catch (ServiceException e) {
+            sendError(writer, e);
+        } catch (Exception e) {
+            log("get", e);
+            sendServerError(writer);
+        }
+    }
+
+    // POST /playlists/:id/add
+    public void addItem(ResponseWriter writer, String rawId, String body) {
+        try {
+            int id = parseId(rawId);
             String filename = body.trim();
             playlistService.addItem(id, filename);
             sendJson(writer, 200, "OK",
@@ -109,8 +112,9 @@ public class PlaylistController {
     }
 
     // DELETE /playlists/:id/items/:name
-    public void removeItem(ResponseWriter writer, int id, String filename) {
+    public void removeItem(ResponseWriter writer, String rawId, String filename) {
         try {
+            int id = parseId(rawId);
             playlistService.removeItem(id, filename);
             sendJson(writer, 200, "OK",
                     JsonWriter.object("status", "removed", "name", filename));
@@ -123,11 +127,12 @@ public class PlaylistController {
     }
 
     // DELETE /playlists/:id
-    public void delete(ResponseWriter writer, int id) {
+    public void delete(ResponseWriter writer, String rawId) {
         try {
+            int id = parseId(rawId);
             playlistService.delete(id);
             sendJson(writer, 200, "OK",
-                    JsonWriter.object("status", "deleted", "id", String.valueOf(id)));
+                    JsonWriter.object("status", "deleted", "id", rawId));
         } catch (ServiceException e) {
             sendError(writer, e);
         } catch (Exception e) {
@@ -169,5 +174,13 @@ public class PlaylistController {
     private void log(String method, Exception e) {
         LoggerManager.getInstance().info(
                 "[ERROR] PlaylistController." + method + ": " + e.getMessage());
+    }
+
+    private int parseId(String rawId) throws ServiceException {
+        try {
+            return Integer.parseInt(rawId);
+        } catch (NumberFormatException e) {
+            throw new ServiceException(400, "Invalid playlist id: " + rawId);
+        }
     }
 }

@@ -9,8 +9,7 @@ public class HttpResponse {
 
     private HttpResponse() {}
 
-    public static void send(SocketChannel client, SelectionKey key,
-                            byte[] data, boolean keepAlive) {
+    public static void send(SocketChannel client, SelectionKey key, byte[] data, boolean keepAlive) {
         try {
             client.write(ByteBuffer.wrap(data));
             if (!keepAlive) cancelAndClose(key, client);
@@ -36,7 +35,7 @@ public class HttpResponse {
                 "Content-Length: " + body.length() + "\r\n\r\n" + body;
     }
 
-    public static String notFound()        { return error(404, "Not Found",          "Resource not found"); }
-    public static String methodNotAllowed(){ return error(405, "Method Not Allowed", "Method not allowed"); }
-    public static String forbidden()       { return error(403, "Forbidden",          "Access denied");      }
+    public static String notFound() { return error(404, "Not Found", "Resource not found"); }
+    public static String methodNotAllowed() { return error(405, "Method Not Allowed", "Method not allowed"); }
+    public static String forbidden() { return error(403, "Forbidden", "Access denied"); }
 }
