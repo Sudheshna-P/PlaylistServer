@@ -78,8 +78,7 @@ public class UploadController {
             FileChannel outChannel = FileChannel.open(tempFile,
                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
 
-            http.UploadState state = new http.UploadState(
-                    tempFile, outChannel, bodyLength,
+            http.UploadState state = new http.UploadState(tempFile, outChannel, bodyLength,
                     boundary, writer.isKeepAlive(), writer);
 
             if (alreadyBuffered > 0) {
@@ -130,10 +129,9 @@ public class UploadController {
                 uploadService.parse(body, state.boundary, saved, errors);
                 sendUploadResponse(state.writer, saved, errors);
             } catch (Exception e) {
-                LoggerManager.getInstance().info(
-                        "[ERROR] UploadController.finishUpload: " + e.getMessage());
+                LoggerManager.getInstance().info("[ERROR] UploadController.finishUpload: " + e.getMessage());
             } finally {
-                onDone.run(); // SimpleHttpServer resets key state
+                onDone.run();
             }
         });
     }

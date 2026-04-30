@@ -105,7 +105,7 @@ public class SimpleHttpServer {
         ReadAcc acc = (attachment instanceof ReadAcc) ? (ReadAcc) attachment : new ReadAcc();
         acc.buf.write(buffer.array(), 0, buffer.limit());
 
-        if (acc.buf.size() > 8192) {
+        if (acc.buf.size() > 64*1024) {
             try {
                 client.write(ByteBuffer.wrap(HttpResponse.error(431,
                         "Request Header Fields Too Large",
@@ -125,8 +125,7 @@ public class SimpleHttpServer {
             if (headerEnd == -1) break;
 
             int end = headerEnd + 4;
-            String headers = new String(data, processed, end - processed,
-                    StandardCharsets.US_ASCII);
+            String headers = new String(data, processed, end - processed, StandardCharsets.US_ASCII);
             String requestLine = headers.lines().findFirst().orElse("");
 
             if (requestLine.isEmpty()) { HttpResponse.cancelAndClose(key, client); return; }
@@ -146,7 +145,6 @@ public class SimpleHttpServer {
 
             ResponseWriter writer = new ResponseWriter(key, client, keepAlive);
 
-            // handle upload specially since it needs key attachment
             if (method.equals("POST") && path.equals("/upload")) {
                 int alreadyBuffered = data.length - end;
                 Object result = uploadController.beginUpload(writer, headers, data, end, alreadyBuffered);

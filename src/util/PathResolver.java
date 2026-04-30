@@ -11,10 +11,10 @@ public class PathResolver {
 
     public static Path resolve(String path) {
         String folder = "Public", prefix = "";
-        if (path.startsWith("/images/"))       { folder = "images";    prefix = "/images"; }
-        else if (path.startsWith("/files/"))   { folder = "documents"; prefix = "/files"; }
-        else if (path.startsWith("/video/"))   { folder = "video";     prefix = "/video"; }
-        else if (path.startsWith("/uploads/")) { folder = "uploads";   prefix = "/uploads"; }
+        if (path.startsWith("/images/")) { folder = "images"; prefix = "/images"; }
+        else if (path.startsWith("/files/")) { folder = "documents"; prefix = "/files"; }
+        else if (path.startsWith("/video/")) { folder = "video"; prefix = "/video"; }
+        else if (path.startsWith("/uploads/")) { folder = "uploads"; prefix = "/uploads"; }
 
         String rel = prefix.isEmpty() ? path : path.substring(prefix.length());
         if (rel.isEmpty() || rel.equals("/")) return null;

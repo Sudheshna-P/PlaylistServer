@@ -4,7 +4,6 @@ import http.HttpParser;
 
 import java.io.IOException;
 import java.nio.file.*;
-//import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -42,8 +41,7 @@ public class UploadModel {
             int dataEnd = HttpParser.indexOf(body, delimiter, dataStart);
             if (dataEnd == -1) dataEnd = body.length;
 
-            String disposition = HttpParser.extractPartHeader(
-                    partHeaders, "Content-Disposition");
+            String disposition = HttpParser.extractPartHeader(partHeaders, "Content-Disposition");
             String filename = HttpParser.extractFilename(disposition);
 
             if (filename == null || filename.isEmpty()) {

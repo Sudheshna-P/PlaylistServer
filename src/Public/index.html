@@ -49,30 +49,30 @@
 
 <h1>Playlist Server</h1>
 
-<!-- ── Upload ── -->
+<!--Upload -->
 <h2>Upload Media</h2>
 <input type="file" id="fileInput" multiple accept="image/*,video/*"/>
 <button onclick="uploadFiles()">Upload</button>
 <div class="status" id="uploadStatus"></div>
 
-<!-- ── Library ── -->
+<!--Library-->
 <h2>Library</h2>
 <button onclick="loadLibrary()">Refresh</button>
 <ul id="libraryList"><li>No files yet</li></ul>
 
-<!-- ── Create Playlist ── -->
+<!--Create Playlist-->
 <h2>Create Playlist</h2>
 <input type="text" id="playlistName" placeholder="Playlist name"/>
 <button class="success" onclick="createPlaylist()">Create</button>
 <div class="status" id="createStatus"></div>
 <p style="font-size:13px;color:#555;">Check files in library above then click Create.</p>
 
-<!-- ── My Playlists ── -->
+<!--My Playlists-->
 <h2>My Playlists</h2>
 <button onclick="loadPlaylists()">Refresh</button>
 <ul id="playlistList"><li>No playlists yet</li></ul>
 
-<!-- ── Playlist Detail ── -->
+<!-- Playlist Detail -->
 <div id="playlistDetail">
     <div style="display:flex;align-items:center;justify-content:space-between;">
         <h3 id="detailName" style="margin:0"></h3>
@@ -85,7 +85,7 @@
     <ul id="detailItems"></ul>
 </div>
 
-<!-- ── Preview ── -->
+<!--Preview -->
 <h2>Preview</h2>
 <div id="nowPlaying">Select a file from a playlist to preview</div>
 <div id="previewBox">Select a file</div>
@@ -97,7 +97,7 @@
     let activePlaylistItems = [];
     let currentItemIdx = -1;
 
-    // ── Upload ────────────────────────────────────────────────────────────────
+    //Upload
     async function uploadFiles() {
         const input  = document.getElementById('fileInput');
         const status = document.getElementById('uploadStatus');
@@ -125,7 +125,7 @@
         }
     }
 
-    // ── Library ───────────────────────────────────────────────────────────────
+    // Library
     async function loadLibrary() {
         try {
             const res = await fetch('/library');
@@ -152,7 +152,7 @@
         return [...document.querySelectorAll('.lib-check:checked')].map(cb => cb.value);
     }
 
-    // ── Create Playlist ───────────────────────────────────────────────────────
+    //Create Playlist
     async function createPlaylist() {
         const name   = document.getElementById('playlistName').value.trim();
         const status = document.getElementById('createStatus');
@@ -189,7 +189,7 @@
 
             if (res.ok) {
                 status.className = 'status';
-                status.textContent = '✓ Created: ' + result.name;
+                status.textContent = ' Created: ' + result.name;
                 document.getElementById('playlistName').value = '';
                 document.querySelectorAll('.lib-check').forEach(cb => cb.checked = false);
                 loadPlaylists();
@@ -203,7 +203,7 @@
         }
     }
 
-    // ── Playlists ─────────────────────────────────────────────────────────────
+    //Playlists
     async function loadPlaylists() {
         try {
             const res  = await fetch('/playlists');
@@ -307,7 +307,7 @@
         }
     }
 
-    // ── Preview ───────────────────────────────────────────────────────────────
+    //Preview
     function selectItem(i) {
         currentItemIdx = i;
         document.querySelectorAll('#detailItems li').forEach(li => li.classList.remove('active'));
